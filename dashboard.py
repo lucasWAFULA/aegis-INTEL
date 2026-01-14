@@ -3036,10 +3036,12 @@ def _render_login_page():
     }
     
     .logo-container img {
-        max-width: 150px;
+        max-width: 100px;
+        max-height: 80px;
         height: auto;
         opacity: 0.9;
         transition: opacity 0.3s ease;
+        object-fit: contain;
     }
     
     .logo-container img:hover {
@@ -3146,8 +3148,10 @@ def _render_login_page():
             st.markdown('<div class="login-header">', unsafe_allow_html=True)
             
             # Center the logo - clickable to toggle login form
-            col1, col2, col3 = st.columns([1, 2, 1])
-            with col2:
+            col1, col2, col3 = with custom styling
+                st.markdown('<div class="logo-container">', unsafe_allow_html=True)
+                st.image(str(logo_path), use_container_width=True)
+                st.markdown('</div>', unsafe_allow_html
                 # Display logo first
                 st.image(str(logo_path), use_container_width=True)
                 
