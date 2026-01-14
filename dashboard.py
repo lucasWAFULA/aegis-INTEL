@@ -18,6 +18,27 @@ from plotly.subplots import make_subplots
 import base64
 from pathlib import Path
 
+# Optional dependencies - gracefully handle if not available
+try:
+    import pyomo
+    PYOMO_AVAILABLE = True
+except ImportError:
+    PYOMO_AVAILABLE = False
+    st.warning("⚠️ Pyomo not available - optimization features may be limited")
+
+try:
+    import cvxpy
+    CVXPY_AVAILABLE = True
+except ImportError:
+    CVXPY_AVAILABLE = False
+
+try:
+    import shap
+    SHAP_AVAILABLE = True
+except ImportError:
+    SHAP_AVAILABLE = False
+
+
 # Consistent color scheme and behavior classes
 COLORS = {
     "cooperative": "#10b981",

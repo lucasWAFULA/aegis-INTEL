@@ -27,18 +27,18 @@ Thumbs.db
 .ipynb_checkpoints/
 *.ipynb
 
-# Models (large files)
-*.h5
+# Models (large files - but allow specific model files)
 *.pkl
 *.pth
 *.ckpt
 
-# Data
-*.csv
-*.xlsx
-*.json
+# Data (but allow specific required files)
 data/
 datasets/
+
+# Exclude large training data but allow small config files
+training_*.csv
+*_15000_*.csv
 
 # Logs
 *.log
