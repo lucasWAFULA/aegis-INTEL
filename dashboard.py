@@ -2973,14 +2973,14 @@ def _render_login_page():
     if "show_login_form" not in st.session_state:
         st.session_state.show_login_form = False
     
-    # Custom CSS for login page with refined gradient background
+    # Custom CSS for login page with gradient background
     st.markdown("""
     <style>
-    /* Full screen gradient background - refined for command interface */
+    /* Full screen gradient background */
     .stApp {
-        background: linear-gradient(135deg, #1e3a8a 0%, #3b82f6 40%, #60a5fa 100%);
-        background-size: 200% 200%;
-        animation: gradientShift 20s ease infinite;
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 25%, #f093fb 50%, #4facfe 75%, #00f2fe 100%);
+        background-size: 400% 400%;
+        animation: gradientShift 15s ease infinite;
     }
     
     @keyframes gradientShift {
@@ -3006,9 +3006,9 @@ def _render_login_page():
     }
     
     .login-container {
-        max-width: 420px;
+        max-width: 450px;
         margin: 0 auto;
-        padding: 2rem 1.5rem;
+        padding: 0.3rem 1.5rem 0.3rem 1.5rem;
         position: relative;
         z-index: 1;
         min-height: 100vh;
@@ -3047,79 +3047,41 @@ def _render_login_page():
     }
     
     .login-title {
-        font-family: 'IBM Plex Sans', sans-serif;
-        font-size: 24px;
-        font-weight: 600;
+        font-size: 28px;
+        font-weight: 700;
         color: #ffffff;
-        margin-bottom: 0.5rem;
-        text-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
-        letter-spacing: -0.3px;
+        margin-bottom: 0.3rem;
+        text-shadow: 0 2px 10px rgba(0, 0, 0, 0.3);
     }
     
     .login-subtitle {
-        font-family: 'IBM Plex Sans', sans-serif;
-        font-size: 13px;
-        color: rgba(255, 255, 255, 0.9);
-        line-height: 1.5;
-        text-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
-        font-weight: 400;
-    }
-    
-    .security-badge {
-        display: inline-flex;
-        align-items: center;
-        gap: 0.3rem;
-        background: rgba(255, 255, 255, 0.15);
-        backdrop-filter: blur(10px);
-        padding: 0.4rem 0.8rem;
-        border-radius: 20px;
-        font-size: 11px;
-        font-weight: 500;
+        font-size: 14px;
         color: rgba(255, 255, 255, 0.95);
-        border: 1px solid rgba(255, 255, 255, 0.25);
-        margin-top: 0.5rem;
+        line-height: 1.4;
+        text-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
     }
     
     .login-box {
-        background: rgba(255, 255, 255, 0.97);
+        background: rgba(255, 255, 255, 0.98);
         backdrop-filter: blur(20px);
-        border-radius: 12px;
-        padding: 2rem 2rem 1.5rem 2rem;
+        border-radius: 16px;
+        padding: 1rem 1.5rem;
         box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3), 0 0 0 1px rgba(255, 255, 255, 0.5) inset;
         border: 1px solid rgba(255, 255, 255, 0.3);
-        margin-top: 1.5rem;
     }
     
-    /* Input field styling */
-    .stTextInput > div > div > input {
-        border-radius: 8px;
-        border: 1.5px solid #cbd5e1;
-        padding: 0.6rem 1rem;
-        font-size: 14px;
-        transition: all 0.2s ease;
+    .login-form-header {
+        text-align: center;
+        margin-bottom: 0.6rem;
+        padding-bottom: 0.4rem;
+        border-bottom: 2px solid #e5e7eb;
     }
     
-    .stTextInput > div > div > input:focus {
-        border-color: #3b82f6;
-        box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
-    }
-    
-    /* Button styling */
-    .stButton > button {
-        background: linear-gradient(135deg, #2563eb 0%, #1e40af 100%) !important;
-        color: white !important;
-        border: none !important;
-        border-radius: 8px !important;
-        padding: 0.7rem 1.5rem !important;
-        font-weight: 600 !important;
-        font-size: 15px !important;
-        box-shadow: 0 4px 14px rgba(37, 99, 235, 0.4) !important;
-        transition: all 0.2s ease !important;
-    }
-    
-    .stButton > button:hover {
-        transform: translateY(-1px);
-        box-shadow: 0 6px 20px rgba(37, 99, 235, 0.5) !important;
+    .login-form-header h3 {
+        color: #1e40af;
+        font-size: 16px;
+        font-weight: 600;
+        margin: 0;
     }
     
     .login-footer {
@@ -3317,8 +3279,15 @@ Risk-Aware Intelligence Source Optimization for Strategic Decision Superiority
     
     # Show login form only if button was clicked
     if st.session_state.show_login_form:
-        # Login box - clean, centered card
+        # Login box with tab positioning
         st.markdown('<div class="login-box">', unsafe_allow_html=True)
+        
+        # Form header
+        st.markdown("""
+        <div class="login-form-header">
+            <h3>🔐 Secure Authentication</h3>
+        </div>
+        """, unsafe_allow_html=True)
         
         # Predefined credentials (in production, use proper authentication)
         CREDENTIALS = {
@@ -3328,77 +3297,42 @@ Risk-Aware Intelligence Source Optimization for Strategic Decision Superiority
             "operator": "ops123"
         }
         
-        # Role mapping for display
-        ROLES = {
-            "admin": "System Administrator",
-            "analyst": "Intelligence Analyst",
-            "commander": "Operations Commander",
-            "operator": "Field Operator"
-        }
-        
-        # Login form with improved spacing
+        # Login form
         with st.form("login_form", clear_on_submit=True):
-            st.markdown("""
-            <p style="text-align: center; color: #64748b; font-size: 12px; margin-bottom: 1.5rem; font-weight: 500;">
-                Enter your credentials to access the system
-            </p>
-            """, unsafe_allow_html=True)
-            
             username = st.text_input(
-                "Username",
-                placeholder="Enter username",
-                key="login_username",
-                label_visibility="visible"
+                "👤 Username",
+                placeholder="Enter your username",
+                key="login_username"
             )
             
             password = st.text_input(
-                "Password",
+                "🔑 Password",
                 type="password",
-                placeholder="Enter password",
-                key="login_password",
-                label_visibility="visible"
+                placeholder="Enter your password",
+                key="login_password"
             )
             
-            st.markdown("<div style='margin-top: 1.5rem; margin-bottom: 0.5rem;'></div>", unsafe_allow_html=True)
-            
-            submit = st.form_submit_button("🚀 Sign In Securely", use_container_width=True, type="primary")
+            col1, col2, col3 = st.columns([1, 2, 1])
+            with col2:
+                submit = st.form_submit_button("🚀 Sign In", use_container_width=True, type="primary")
             
             if submit:
                 if username in CREDENTIALS and password == CREDENTIALS[username]:
                     st.session_state.authenticated = True
                     st.session_state.username = username
-                    st.session_state.user_role = ROLES.get(username, "User")
                     st.session_state.login_time = datetime.now()
                     st.success(f"✅ Welcome back, {username.title()}!")
                     st.balloons()
                     st.rerun()
                 else:
-                    st.error("❌ Invalid credentials. Access denied.")
-            
-            # Trust signal below button
-            st.markdown("""
-            <p style="text-align: center; color: #64748b; font-size: 11px; margin-top: 1rem; font-weight: 500;">
-                🛡️ All sessions are logged and monitored for audit purposes
-            </p>
-            """, unsafe_allow_html=True)
+                    st.error("❌ Invalid credentials. Please check your username and password.")
         
         st.markdown('</div>', unsafe_allow_html=True)  # Close login-box
         
-        # Demo credentials info - professional and compact
+        # Demo credentials info - more compact
         st.markdown("""
         <div class="login-footer">
-            <div class="demo-credentials-box" style="padding: 0.6rem 0.8rem; margin-top: 1rem;">
-                <p style="margin: 0 0 0.4rem 0; font-weight: 600; font-size: 10px; color: #475569; text-align: center;">
-                    📋 Demo Access Credentials
-                </p>
-                <p style="margin: 0.2rem 0; font-family: 'IBM Plex Sans', sans-serif; font-size: 10px; color: #1e40af; line-height: 1.6; text-align: center;">
-                    <strong>Admin:</strong> admin / admin123<br>
-                    <strong>Analyst:</strong> analyst / analyst123<br>
-                    <strong>Commander:</strong> commander / command123
-                </p>
-            </div>
-            <p style="margin-top: 1rem; font-size: 9px; opacity: 0.85; text-align: center; color: rgba(255, 255, 255, 0.9);">
-                © 2026 ML-TSSP HUMINT Dashboard v1.0 | Aegis Intelligence PlatforDemo Credentials:</p>
+            <p style="margin: 0 0 0.3rem 0; font-weight: 600; font-size: 10px;">📋 Demo Credentials:</p>
             <div class="demo-credentials-box" style="padding: 0.4rem;">
                 <p style="margin: 0.15rem 0; font-family: 'Roboto Mono', monospace; font-size: 10px; color: #1e40af; line-height: 1.5;">
                     <strong>Admin:</strong> admin / admin123<br>
