@@ -3265,7 +3265,7 @@ def _render_login_page():
     st.markdown("""<link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght=700;800&display=swap" rel="stylesheet">
-<div style="font-family: 'Orbitron', 'IBM Plex Sans', sans-serif; font-size: 14px; font-weight: 700; margin-top: 0.3rem; line-height: 1.4; text-align: center; letter-spacing: 0.8px; text-shadow: 0 2px 4px rgba(0, 0, 0, 0.3); color: #dc2626;">
+<div style="font-family: 'IBM Plex Sans', sans-serif; font-size: 14px; font-weight: 600; margin-top: 0.5rem; line-height: 1.4; text-align: center; letter-spacing: 0.3px; text-shadow: 0 2px 4px rgba(0, 0, 0, 0.3); color: #ffffff;">
 Risk-Aware Intelligence Source Optimization for Strategic Decision Superiority
 </div>
 <p style="margin-top: 0.4rem; margin-bottom: 0.3rem; font-size: 12px; text-align: center; color: #ffffff; text-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);">🔒 Secure access for authorized personnel only</p>
