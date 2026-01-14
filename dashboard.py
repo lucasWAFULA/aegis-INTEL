@@ -3148,12 +3148,12 @@ def _render_login_page():
             st.markdown('<div class="login-header">', unsafe_allow_html=True)
             
             # Center the logo - clickable to toggle login form
-            col1, col2, col3 = with custom styling
+            col1, col2, col3 = st.columns([1, 2, 1])
+            with col2:
+                # Display logo with custom styling
                 st.markdown('<div class="logo-container">', unsafe_allow_html=True)
                 st.image(str(logo_path), use_container_width=True)
-                st.markdown('</div>', unsafe_allow_html
-                # Display logo first
-                st.image(str(logo_path), use_container_width=True)
+                st.markdown('</div>', unsafe_allow_html=True)
                 
                 # Clickable area below logo
                 if st.button("🔐 Click to Access", key="show_login", use_container_width=True, type="primary"):
