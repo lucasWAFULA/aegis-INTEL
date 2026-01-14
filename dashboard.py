@@ -3282,13 +3282,6 @@ Risk-Aware Intelligence Source Optimization for Strategic Decision Superiority
         # Login box with tab positioning
         st.markdown('<div class="login-box">', unsafe_allow_html=True)
         
-        # Form header
-        st.markdown("""
-        <div class="login-form-header">
-            <h3>🔐 Secure Authentication</h3>
-        </div>
-        """, unsafe_allow_html=True)
-        
         # Predefined credentials (in production, use proper authentication)
         CREDENTIALS = {
             "admin": "admin123",
@@ -3297,20 +3290,28 @@ Risk-Aware Intelligence Source Optimization for Strategic Decision Superiority
             "operator": "ops123"
         }
         
-        # Login form
+        # Login form with header
         with st.form("login_form", clear_on_submit=True):
-            username = st.text_input(
-                "👤 Username",
-                placeholder="Enter your username",
-                key="login_username"
-            )
+            st.markdown("""
+            <div class="login-form-header">
+                <h3>🔐 Secure Authentication</h3>
+            </div>
+            """, unsafe_allow_html=True)
             
-            password = st.text_input(
-                "🔑 Password",
-                type="password",
-                placeholder="Enter your password",
-                key="login_password"
-            )
+            col1, col2, col3 = st.columns([0.5, 3, 0.5])
+            with col2:
+                username = st.text_input(
+                    "👤 Username",
+                    placeholder="Enter your username",
+                    key="login_username"
+                )
+                
+                password = st.text_input(
+                    "🔑 Password",
+                    type="password",
+                    placeholder="Enter your password",
+                    key="login_password"
+                )
             
             col1, col2, col3 = st.columns([1, 2, 1])
             with col2:
