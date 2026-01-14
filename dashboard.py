@@ -3008,22 +3008,25 @@ def _render_login_page():
     .login-container {
         max-width: 450px;
         margin: 0 auto;
-        padding: 0.3rem 1.5rem 0.3rem 1.5rem;
+        padding: 1rem 1.5rem 1.5rem 1.5rem;
         position: relative;
         z-index: 1;
         min-height: 100vh;
         display: flex;
         flex-direction: column;
-        justify-content: center;
+        justify-content: flex-start;
+        padding-top: 2rem;
     }
     
     .login-header {
         text-align: center;
-        margin-bottom: 0.4rem;
+        margin-bottom: 0.5rem;
+        margin-top: 0;
     }
     
     .logo-container {
-        margin-bottom: 0.3rem;
+        margin-bottom: 0.5rem;
+        margin-top: 0;
         display: flex;
         justify-content: center;
         align-items: center;
@@ -3225,8 +3228,8 @@ def _render_login_page():
                     animation: pulse 3s ease-in-out infinite;
                 ">
                     <div style="
-                        width: 68px;
-                        height: 68px;
+                        width: 20px;
+                        height: 20px;
                         background: white;
                         border-radius: 50%;
                         display: flex;
