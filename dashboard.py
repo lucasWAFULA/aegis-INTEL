@@ -3100,37 +3100,22 @@ def _render_login_page():
         box-shadow: 0 4px 15px rgba(0, 0, 0, 0.2);
     }
     
-    /* Tab positioning */
+    /* Tab positioning - hidden */
     .stTabs {
         background: transparent;
         margin-top: -1.5rem;
     }
     
     .stTabs [data-baseweb="tab-list"] {
-        gap: 0;
-        background: rgba(255, 255, 255, 0.25);
-        backdrop-filter: blur(10px);
-        border-radius: 12px 12px 0 0;
-        padding: 0.5rem;
-        margin-bottom: 0;
-        border: 1px solid rgba(255, 255, 255, 0.3);
-        border-bottom: none;
+        display: none;
     }
     
     .stTabs [data-baseweb="tab"] {
-        color: rgba(255, 255, 255, 0.9);
-        font-weight: 600;
-        font-size: 16px;
-        padding: 0.75rem 2rem;
-        background: transparent;
-        border-radius: 8px 8px 0 0;
-        text-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
+        display: none;
     }
     
     .stTabs [aria-selected="true"] {
-        background: rgba(255, 255, 255, 0.98);
-        color: #1e40af;
-        text-shadow: none;
+        display: none;
     }
     </style>
     """, unsafe_allow_html=True)
@@ -3261,14 +3246,13 @@ def _render_login_page():
             </div>
         """, unsafe_allow_html=True)
     
-    # Tagline and security notice
+    # Tagline
     st.markdown("""<link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Orbitron:wght=700;800&display=swap" rel="stylesheet">
-<div style="font-family: 'IBM Plex Sans', sans-serif; font-size: 14px; font-weight: 600; margin-top: 0.5rem; line-height: 1.4; text-align: center; letter-spacing: 0.3px; text-shadow: 0 2px 4px rgba(0, 0, 0, 0.3); color: #ffffff;">
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;600&display=swap" rel="stylesheet">
+<div style="font-family: 'IBM Plex Sans', sans-serif; font-size: 14px; font-weight: 600; margin-top: 0.5rem; margin-bottom: 1.2rem; line-height: 1.4; text-align: center; letter-spacing: 0.3px; text-shadow: 0 2px 4px rgba(0, 0, 0, 0.3); color: #ffffff;">
 Risk-Aware Intelligence Source Optimization for Strategic Decision Superiority
 </div>
-<p style="margin-top: 0.4rem; margin-bottom: 0.3rem; font-size: 12px; text-align: center; color: #ffffff; text-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);">🔒 Secure access for authorized personnel only</p>
 </div>
 <style>
 @keyframes pulse {
