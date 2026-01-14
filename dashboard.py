@@ -3364,6 +3364,16 @@ Risk-Aware Intelligence Source Optimization for Strategic Decision Superiority
             submit = st.form_submit_button("🚀 Sign In Securely", use_container_width=True, type="primary")
             
             if submit:
+                if username in CREDENTIALS and password == CREDENTIALS[username]:
+                    st.session_state.authenticated = True
+                    st.session_state.username = username
+                    st.session_state.user_role = ROLES.get(username, "User")
+                    st.session_state.login_time = datetime.now()
+                    st.success(f"✅ Welcome back, {username.title()}!")
+                    st.balloons()
+                    st.rerun()
+                else:
+                    st.error("❌ Invalid credentials. Access denied.")
             
             # Trust signal below button
             st.markdown("""
