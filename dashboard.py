@@ -3,12 +3,34 @@
 # ======================================================
 import os
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'  # Suppress TensorFlow warnings
+os.environ['OMP_NUM_THREADS'] = '1'  # Limit CPU threads
+os.environ['MKL_NUM_THREADS'] = '1'  # Limit MKL threads
 import warnings
 warnings.filterwarnings('ignore')
+import gc  # Garbage collection
 
 MODE = "streamlit"  # options: "streamlit", "api", "batch"
 
 import streamlit as st
+st.set_page_config(
+    page_title="ML-TSSP Dashboard",
+    layout="wide",
+    initial_sidebar_state="expanded",
+    menu_items=None
+)
+
+# Lazy imports - only load when needed
+@st.cache_resource
+def load_heavy_libraries():
+    """Lazy load TensorFlow and other heavy dependencies."""
+    try:
+        import tensorflow as tf
+        tf.config.set_visible_devices([], 'GPU')  # Disable GPU
+        return tf
+    except Exception as e:
+        st.warning(f"TensorFlow not loaded: {e}")
+        return None
+
 import requests
 import json
 import pandas as pd
@@ -89,11 +111,7 @@ def render_kpi_indicator(title: str, value: float | None, *, reference: float | 
 # ...existing _init_streamlit() function...
 def _init_streamlit():
     """Initialize Streamlit config with enhanced typography and styling."""
-    st.set_page_config(
-        page_title="ML–TSSP HUMINT Tasking Dashboard",
-        layout="wide",
-        page_icon="🛰️"
-    )
+    # Page config already set at top of file - skip here
 
     st.markdown("""
     <style>
@@ -3800,15 +3818,15 @@ def render_streamlit_app():
         if preset_mode == "🟢 Conservative":
             default_rel_disengage, default_rel_flag = 0.45, 0.60
             default_dec_disengage, default_dec_escalate = 0.65, 0.50
-            default_sources = 15
+            default_sources = 10  # Reduced for cloud deployment
         elif preset_mode == "🟡 Balanced":
             default_rel_disengage, default_rel_flag = 0.35, 0.50
             default_dec_disengage, default_dec_escalate = 0.75, 0.60
-            default_sources = 21
+            default_sources = 15  # Reduced for cloud deployment
         elif preset_mode == "🔴 Aggressive":
             default_rel_disengage, default_rel_flag = 0.25, 0.40
             default_dec_disengage, default_dec_escalate = 0.85, 0.70
-            default_sources = 30
+            default_sources = 20  # Reduced for cloud deployment
         else:  # Custom
             default_rel_disengage = st.session_state.get("rel_disengage_slider", 0.35)
             default_rel_flag = st.session_state.get("rel_ci_flag_slider", 0.50)
@@ -3831,10 +3849,10 @@ def render_streamlit_app():
         
         num_sources = st.slider(
             "Number of sources", 
-            1, 80, 
-            default_sources if preset_mode != "⚙️ Custom" else st.session_state.sources_count,
+            1, 30,  # Reduced max from 80 to 30 for cloud
+            default_sources if preset_mode != "⚙️ Custom" else min(st.session_state.sources_count, 30),
             key="num_sources_slider",
-            help="Total intelligence sources in optimization pool"
+            help="Total intelligence sources in optimization pool (max 30 for cloud deployment)"
         )
         st.markdown("<p style='font-size: 10px; color: #6b7280; margin: -0.5rem 0 0.8rem 0; font-style: italic;'>Total sources in the optimization pool</p>", unsafe_allow_html=True)
         
