@@ -1,6 +1,11 @@
 # ======================================================
 # GLOBAL CONFIGURATION & STYLING
 # ======================================================
+import os
+os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'  # Suppress TensorFlow warnings
+import warnings
+warnings.filterwarnings('ignore')
+
 MODE = "streamlit"  # options: "streamlit", "api", "batch"
 
 import streamlit as st
