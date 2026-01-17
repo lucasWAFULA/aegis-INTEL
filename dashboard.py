@@ -579,8 +579,48 @@ def compute_emv(policy_data):
             emv += float(assignment.get("expected_risk", 0.0))
     return emv
 
-def enforce_assignment_constraints(policy_data):
-    """One task per source; randomize task assignment based on probabilities."""
+def calculate_optimization_score(assignment: dict, source_features: dict = None) -> float:
+    """
+    Calculate dynamic optimization score (0-100) based on multiple factors.
+    
+    Args:
+        assignment: Assignment dict with expected_risk, task, etc.
+        source_features: Optional dict with task_success_rate, corroboration_score, report_timeliness
+    
+    Returns:
+        float: Optimization score (0-100), higher is better
+    """
+    # Base score from expected risk (inverted: lower risk = higher score)
+    expected_risk = float(assignment.get("expected_risk", 0.5))
+    risk_score = (1.0 - expected_risk) * 40.0  # 40% weight
+    
+    # If source features are available, incorporate them
+    if source_features:
+        tsr = float(source_features.get("task_success_rate", 0.5))
+        cor = float(source_features.get("corroboration_score", 0.5))
+        tim = float(source_features.get("report_timeliness", 0.5))
+        
+        tsr_score = tsr * 25.0  # 25% weight
+        cor_score = cor * 20.0  # 20% weight
+        tim_score = tim * 15.0  # 15% weight
+        
+        total_score = risk_score + tsr_score + cor_score + tim_score
+    else:
+        # Without features, scale risk component to 0-100
+        total_score = risk_score * 2.5
+    
+    return round(total_score, 2)
+
+
+def enforce_assignment_constraints(policy_data, sources_map=None):
+    """
+    One task per source; randomize task assignment based on probabilities.
+    Now also calculates and adds optimization scores.
+    
+    Args:
+        policy_data: List of assignment dictionaries
+        sources_map: Optional dict mapping source_id to source data with features
+    """
     if not policy_data:
         return []
     seen_sources = set()
@@ -600,6 +640,13 @@ def enforce_assignment_constraints(policy_data):
         weights = weights / weights.sum()
         
         new_a["task"] = rng.choice(tasks, p=weights)
+        
+        # Calculate optimization score
+        source_features = None
+        if sources_map and sid in sources_map:
+            source_features = sources_map[sid].get("features")
+        new_a["score"] = calculate_optimization_score(new_a, source_features)
+        
         fixed.append(new_a)
     
     return fixed
@@ -3868,16 +3915,18 @@ def render_streamlit_app():
             "recourse_rules": {}
         })
     
-    with st.expander("🧠 Decision Optimization Engine", expanded=(nav_key == "profiles")):
-        st.markdown("""
-        <div style="background:linear-gradient(135deg, #ffffff 0%, #f8fafc 100%);border-radius:15px;padding:1.8rem;
-                    box-shadow:0 4px 15px rgba(0,0,0,0.12);border:1px solid #cbd5e1;
-                    border-top:4px solid #10b981;">
-            <h3 class="section-header" style="margin-top:0;color:#047857;">🧠 Decision Optimization Engine</h3>
-            <p style="text-align:center;color:#475569;font-size:13px;margin:0 0 1.2rem 0;">
-                Configure parameters and execute the ML–TSSP optimization algorithm
-            </p>
-        """, unsafe_allow_html=True)
+    # Show Decision Optimization Engine only on Source Profiles tab
+    if nav_key == "profiles":
+        with st.expander("🧠 Decision Optimization Engine", expanded=True):
+            st.markdown("""
+            <div style="background:linear-gradient(135deg, #ffffff 0%, #f8fafc 100%);border-radius:15px;padding:1.8rem;
+                        box-shadow:0 4px 15px rgba(0,0,0,0.12);border:1px solid #cbd5e1;
+                        border-top:4px solid #10b981;">
+                <h3 class="section-header" style="margin-top:0;color:#047857;">🧠 Decision Optimization Engine</h3>
+                <p style="text-align:center;color:#475569;font-size:13px;margin:0 0 1.2rem 0;">
+                    Configure parameters and execute the ML–TSSP optimization algorithm
+                </p>
+            """, unsafe_allow_html=True)
         
         # ========== OPTIMIZATION CONTROL PANEL ==========
         st.markdown('<h4 style="color: #1e3a8a; margin-bottom: 1rem;">🧪 Optimization Control Panel</h4>', unsafe_allow_html=True)
@@ -3923,10 +3972,23 @@ def render_streamlit_app():
                 st.metric("Expected Risk", "—")
             with col3:
                 st.metric("Improvement vs Uniform", "—")
+            
+            # Explanation for pre-optimization state
+            st.markdown(f"""
+            <div style='background: #f8fafc; border-left: 3px solid #94a3b8; padding: 0.8rem 1rem; border-radius: 6px; margin-top: 1rem;'>
+                <p style='margin: 0; font-size: 12px; color: #475569; line-height: 1.6;'>
+                    <strong>Status:</strong> {len(sources)} sources configured and awaiting optimization. 
+                    Execute the ML-TSSP algorithm to determine optimal task assignments based on reliability thresholds 
+                    (disengage: {st.session_state.recourse_rules['rel_disengage']:.2f}, flag: {st.session_state.recourse_rules['rel_ci_flag']:.2f}) 
+                    and deception constraints (reject: {st.session_state.recourse_rules['dec_disengage']:.2f}, escalate: {st.session_state.recourse_rules['dec_ci_flag']:.2f}).
+                </p>
+            </div>
+            """, unsafe_allow_html=True)
         else:
             results = st.session_state.results
             ml_emv = results.get("emv", {}).get("ml_tssp", 0)
             uni_emv = results.get("emv", {}).get("uniform", 0)
+            det_emv = results.get("emv", {}).get("deterministic", 0)
             risk_reduction = ((uni_emv - ml_emv) / uni_emv * 100) if uni_emv > 0 else 0.0
             
             col1, col2, col3, col4 = st.columns(4)
@@ -3939,6 +4001,41 @@ def render_streamlit_app():
                 render_kpi_indicator("Low Risk Sources", low_risk, suffix=f" / {len(sources)}", key="kpi_low_risk_exec")
             with col4:
                 render_kpi_indicator("Improvement", risk_reduction, suffix="%", note="Vs baseline", key="kpi_improvement_exec")
+            
+            # Dynamic explanation based on optimization results
+            ml_policy = results.get("policies", {}).get("ml_tssp", [])
+            medium_risk = sum(1 for a in ml_policy if 0.3 <= a.get("expected_risk", 0) < 0.6)
+            high_risk = sum(1 for a in ml_policy if a.get("expected_risk", 0) >= 0.6)
+            
+            # Determine outcome characterization
+            if risk_reduction > 10:
+                outcome_desc = "substantive reduction in expected mission value loss"
+            elif risk_reduction > 5:
+                outcome_desc = "measurable reduction in expected mission value loss"
+            elif risk_reduction > 0:
+                outcome_desc = "marginal reduction in expected mission value loss"
+            else:
+                outcome_desc = "no reduction in expected mission value loss relative to the uniform baseline"
+            
+            # Risk distribution assessment
+            risk_distribution = f"{low_risk} low-risk ({low_risk/len(sources)*100:.1f}%), {medium_risk} medium-risk ({medium_risk/len(sources)*100:.1f}%), and {high_risk} high-risk ({high_risk/len(sources)*100:.1f}%)"
+            
+            st.markdown(f"""
+            <div style='background: #f8fafc; border-left: 3px solid #3b82f6; padding: 0.8rem 1rem; border-radius: 6px; margin-top: 1rem;'>
+                <p style='margin: 0 0 0.6rem 0; font-size: 12px; color: #475569; line-height: 1.6;'>
+                    <strong>Outcome:</strong> The ML-TSSP optimization assigns all {len(sources)} sources to tasks with an expected mission value (EMV) loss of {ml_emv:.2f}, 
+                    representing a {outcome_desc} compared to the uniform assignment baseline (EMV: {uni_emv:.2f}) and deterministic policy (EMV: {det_emv:.2f}). 
+                    The source portfolio distributes as {risk_distribution} under current reliability (disengage ≤{st.session_state.recourse_rules['rel_disengage']:.2f}, 
+                    flag ≥{st.session_state.recourse_rules['rel_ci_flag']:.2f}) and deception (reject ≥{st.session_state.recourse_rules['dec_disengage']:.2f}, 
+                    escalate ≥{st.session_state.recourse_rules['dec_ci_flag']:.2f}) constraints.
+                </p>
+                <p style='margin: 0; font-size: 12px; color: #64748b; line-height: 1.6;'>
+                    <strong>Constraint Impact:</strong> The configured thresholds filtered sources based on behavioral reliability and deception indicators, 
+                    with {high_risk} sources ({high_risk/len(sources)*100:.1f}%) exceeding acceptable risk levels despite optimization. 
+                    Adjusting constraint parameters or reviewing high-risk source assignments may yield further risk mitigation within operational requirements.
+                </p>
+            </div>
+            """, unsafe_allow_html=True)
         
         st.markdown('</div>', unsafe_allow_html=True)
         
@@ -3953,16 +4050,19 @@ def render_streamlit_app():
                 with st.spinner("🔄 Running optimization…"):
                     result = run_optimization(payload)
                     if isinstance(result, dict) and isinstance(result.get("policies"), dict):
+                        # Create sources_map for dynamic score calculation
+                        sources_map = {s.get("source_id"): s for s in sources}
+                        
                         for pkey in ["ml_tssp", "deterministic", "uniform"]:
                             plist = result["policies"].get(pkey) or []
-                            fixed = enforce_assignment_constraints(plist)
+                            fixed = enforce_assignment_constraints(plist, sources_map)
                             result["policies"][pkey] = fixed
                             result.setdefault("emv", {})[pkey] = compute_emv(fixed)
                     st.session_state.results = result
                     st.session_state.sources = sources
-                st.success("✅ Optimization complete! Review decision summary above.")
-                st.session_state.show_results_popup = True
-                st.rerun()
+                    st.success("✅ Optimization complete! Review decision summary above.")
+                    st.session_state.show_results_popup = True
+                    st.rerun()
             except Exception as e:
                 st.error(f"❌ Optimization failed: {e}")
 
@@ -3971,9 +4071,10 @@ def render_streamlit_app():
     # ======================================================
     results = st.session_state.results
 
-    if results is not None:
+    # Show Policy Insights tab content
+    if nav_key == "policies" and results is not None:
         st.markdown('<div class="section-frame">', unsafe_allow_html=True)
-        st.markdown("""<h3 class="section-header">🏆 Decision Intelligence Suite</h3>
+        st.markdown("""<h3 class="section-header">📈 Policy Insights - Comparative Policy Evaluation</h3>
         <p style="text-align:center;color:#6b7280;font-size:13px;margin:0 0 1rem 0;">
             Comprehensive analysis of ML–TSSP optimization results with policy comparisons and sensitivity assessments.
         </p>""", unsafe_allow_html=True)
@@ -3985,36 +4086,65 @@ def render_streamlit_app():
         uni_emv = results.get("emv", {}).get("uniform", 0)
         risk_reduction = ((uni_emv - ml_emv) / uni_emv * 100) if uni_emv > 0 else 0.0
         
-        # ========== COMPARATIVE POLICY EVALUATION (UNIFIED SECTION) ==========
-        with st.expander("🧭 Comparative Policy Evaluation", expanded=False):
+        # ========== COMPARATIVE POLICY EVALUATION ==========
+        with st.expander("🧭 Comparative Policy Evaluation", expanded=True):
             _render_comparative_policy_section(results, ml_policy, det_policy, uni_policy, ml_emv, det_emv, uni_emv, risk_reduction)
         with st.expander("🧠 SHAP Explanations", expanded=False):
             _render_shap_section(num_sources)
-        with st.expander("💰 Expected Value of Perfect Information (EVPI)", expanded=False):
-            _render_evpi_section(ml_policy, uni_policy)
-        with st.expander("🔬 Behavioral Uncertainty & Stress Analysis (What-If)", expanded=False):
-            _render_stress_section(ml_policy, ml_emv, det_emv, uni_emv, risk_reduction)
         with st.expander("📡 Source Drift Monitoring (Reliability & Deception)", expanded=False):
             _render_drift_section()
+        st.markdown('</div>', unsafe_allow_html=True)
+    
+    # Show EVPI Focus tab content
+    elif nav_key == "evpi" and results is not None:
+        st.markdown('<div class="section-frame">', unsafe_allow_html=True)
+        st.markdown("""<h3 class="section-header">💰 EVPI Focus - Expected Value of Perfect Information</h3>
+        <p style="text-align:center;color:#6b7280;font-size:13px;margin:0 0 1rem 0;">
+            Quantify the value of perfect information in source selection and tasking decisions.
+        </p>""", unsafe_allow_html=True)
+        ml_policy = results.get("policies", {}).get("ml_tssp", [])
+        uni_policy = results.get("policies", {}).get("uniform", [])
+        
+        with st.expander("💰 Expected Value of Perfect Information (EVPI)", expanded=True):
+            _render_evpi_section(ml_policy, uni_policy)
+        st.markdown('</div>', unsafe_allow_html=True)
+    
+    # Show Stress Lab tab content
+    elif nav_key == "stress" and results is not None:
+        st.markdown('<div class="section-frame">', unsafe_allow_html=True)
+        st.markdown("""<h3 class="section-header">🔬 Stress Lab - Behavioral Uncertainty & What-If Analysis</h3>
+        <p style="text-align:center;color:#6b7280;font-size:13px;margin:0 0 1rem 0;">
+            Test system resilience under various behavioral scenarios and stress conditions.
+        </p>""", unsafe_allow_html=True)
+        ml_policy = results.get("policies", {}).get("ml_tssp", [])
+        ml_emv = results.get("emv", {}).get("ml_tssp", 0)
+        det_emv = results.get("emv", {}).get("deterministic", 0)
+        uni_emv = results.get("emv", {}).get("uniform", 0)
+        risk_reduction = ((uni_emv - ml_emv) / uni_emv * 100) if uni_emv > 0 else 0.0
+        
+        with st.expander("🔬 Behavioral Uncertainty & Stress Analysis (What-If)", expanded=True):
+            _render_stress_section(ml_policy, ml_emv, det_emv, uni_emv, risk_reduction)
         st.markdown('</div>', unsafe_allow_html=True)
     
     # ======================================================
     # 3. SOURCE PROFILES AND TASKING
     # ======================================================
-    with st.expander("📋 Source Profiles & Tasking", expanded=False):
-        st.markdown("""
-        <div style="background:linear-gradient(135deg, #ffffff 0%, #f8fafc 100%);border-radius:15px;padding:1.8rem;
-                    box-shadow:0 4px 15px rgba(0,0,0,0.12);border:1px solid #cbd5e1;
-                    border-top:4px solid #3b82f6;">
-            <h3 class="section-header" style="margin-top:0;color:#1e40af;">📋 Source Profiles & Detailed Analysis</h3>
-            <p style="text-align:center;color:#475569;font-size:13px;margin:0 0 1.2rem 0;">
-                Select a source to view and configure its detailed intelligence profile
-            </p>
-        """, unsafe_allow_html=True)
-        
-        # Initialize selected source in session state
-        if "selected_source_idx" not in st.session_state:
-            st.session_state.selected_source_idx = 0
+    # Show Source Profiles only on Source Profiles tab
+    if nav_key == "profiles":
+        with st.expander("📋 Source Profiles & Tasking", expanded=False):
+            st.markdown("""
+            <div style="background:linear-gradient(135deg, #ffffff 0%, #f8fafc 100%);border-radius:15px;padding:1.8rem;
+                        box-shadow:0 4px 15px rgba(0,0,0,0.12);border:1px solid #cbd5e1;
+                        border-top:4px solid #3b82f6;">
+                <h3 class="section-header" style="margin-top:0;color:#1e40af;">📋 Source Profiles & Detailed Analysis</h3>
+                <p style="text-align:center;color:#475569;font-size:13px;margin:0 0 1.2rem 0;">
+                    Select a source to view and configure its detailed intelligence profile
+                </p>
+            """, unsafe_allow_html=True)
+            
+            # Initialize selected source in session state
+            if "selected_source_idx" not in st.session_state:
+                st.session_state.selected_source_idx = 0
         
         source_selector_col, source_profile_col = st.columns([1.2, 2.8])
         
@@ -4516,12 +4646,29 @@ def render_streamlit_app():
                 """)
                 
                 if ml_assignment:
+                    opt_score = ml_assignment.get('score', 0)
+                    # Determine score color and label
+                    if opt_score >= 70:
+                        score_color = "#10b981"  # Green
+                        score_label = "Excellent"
+                    elif opt_score >= 50:
+                        score_color = "#3b82f6"  # Blue
+                        score_label = "Good"
+                    elif opt_score >= 30:
+                        score_color = "#f59e0b"  # Orange
+                        score_label = "Fair"
+                    else:
+                        score_color = "#ef4444"  # Red
+                        score_label = "Poor"
+                    
                     st.markdown(f"""
                     **ML-TSSP Assignment Context:**
                     - Assigned Task: {ml_assignment.get('task', 'N/A')}
                     - Expected Risk: {expected_risk:.3f}
-                    - Optimization Score: {ml_assignment.get('score', 'N/A')}
-                    """)
+                    - <span style='color: {score_color}; font-weight: 700;'>Optimization Score: {opt_score}/100 ({score_label})</span>
+                    
+                    *Score combines: Risk (40%), Task Success (25%), Corroboration (20%), Timeliness (15%)*
+                    """, unsafe_allow_html=True)
             
             # Update sources list with current selected source data
             features = {
@@ -4557,7 +4704,7 @@ def render_streamlit_app():
             © 2026 Hybrid HUMINT Tasking Dashboard. All Rights Reserved.
         </p>
             <p style='color: #64748b; font-size: 12px; margin-top: 10px;'>
-                Prototype Model Developed based on Synthetic Data for Intelligence Source Performance Evaluation | Version 1.0
+                Prototype Model Developed based on Synthetic Data for Intelligence Source Performance Evaluation and Optimization| Version 1.0
             </p>
         </div>
         """, unsafe_allow_html=True)
