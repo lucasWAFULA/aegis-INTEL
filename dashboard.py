@@ -554,6 +554,78 @@ def fetch_gru_drift(source_id: str):
         r.raise_for_status()
         return r.json()
 
+def _check_system_health():
+    """Check system health and return status."""
+    import sys
+    from pathlib import Path
+    
+    health = {
+        'packages_loaded': 0,
+        'packages_total': 10,
+        'packages_ok': True,
+        'api_available': USE_LOCAL_API,
+        'models_found': 0,
+        'models_expected': 4,
+        'models_ok': False,
+        'warnings': [],
+        'details': {}
+    }
+    
+    # Check core packages
+    packages = {
+        'streamlit': None,
+        'numpy': None,
+        'pandas': None,
+        'plotly': None,
+        'matplotlib': None,
+        'xgboost': None,
+        'sklearn': None,
+        'tensorflow': None,
+        'shap': None,
+        'pyomo': None
+    }
+    
+    for pkg in packages:
+        try:
+            if pkg == 'sklearn':
+                import sklearn
+                packages[pkg] = sklearn.__version__
+            else:
+                mod = __import__(pkg)
+                packages[pkg] = getattr(mod, '__version__', 'installed')
+            health['packages_loaded'] += 1
+        except ImportError:
+            packages[pkg] = 'NOT INSTALLED'
+            health['packages_ok'] = False
+            health['warnings'].append(f"⚠️ {pkg} not available")
+    
+    health['details']['packages'] = packages
+    health['details']['python_version'] = f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}"
+    
+    # Check model files
+    model_files = [
+        'gru_model_reliability.h5',
+        'gru_model_deception.h5',
+        'label_encoder.joblib',
+        'xgb_classifier_features.json'
+    ]
+    
+    for model_file in model_files:
+        if Path(model_file).exists():
+            health['models_found'] += 1
+    
+    health['models_ok'] = health['models_found'] >= 2  # At least core models
+    
+    if health['models_found'] < health['models_expected']:
+        health['warnings'].append(f"⚠️ Only {health['models_found']}/{health['models_expected']} model files found")
+    
+    health['details']['use_local_api'] = USE_LOCAL_API
+    health['details']['pyomo_available'] = PYOMO_AVAILABLE
+    health['details']['cvxpy_available'] = CVXPY_AVAILABLE
+    health['details']['shap_available'] = SHAP_AVAILABLE
+    
+    return health
+
 def _decompose_risk(policy_data):
     """Risk decomposition by behavior class."""
     totals = {b: 0.0 for b in BEHAVIOR_CLASSES}
@@ -3399,6 +3471,53 @@ Risk-Aware Intelligence Source Optimization for Strategic Decision Superiority
 def render_streamlit_app():
     """Main Streamlit application with left-side controls."""
     _init_streamlit()
+    
+    # ======================================================
+    # STARTUP STATUS BANNER
+    # ======================================================
+    startup_placeholder = st.empty()
+    with startup_placeholder.container():
+        st.info("🚀 **Loading ML-TSSP Dashboard...** Initializing components...")
+    
+    try:
+        # ======================================================
+        # HEALTH CHECK STATUS
+        # ======================================================
+        with st.expander("🔍 System Health Check", expanded=False):
+            health_status = _check_system_health()
+            
+            col1, col2, col3 = st.columns(3)
+            with col1:
+                st.metric(
+                    "Core Packages", 
+                    f"{health_status['packages_loaded']}/{health_status['packages_total']}",
+                    "✅ OK" if health_status['packages_ok'] else "⚠️ Issues"
+                )
+            with col2:
+                st.metric(
+                    "API Status",
+                    "Available" if health_status['api_available'] else "Fallback",
+                    "✅" if health_status['api_available'] else "⚠️"
+                )
+            with col3:
+                st.metric(
+                    "Model Files",
+                    f"{health_status['models_found']}/{health_status['models_expected']}",
+                    "✅ OK" if health_status['models_ok'] else "⚠️ Missing"
+                )
+            
+            if health_status['warnings']:
+                st.warning("\n".join(health_status['warnings']))
+            
+            with st.expander("📋 Detailed Status"):
+                st.json(health_status['details'])
+        
+        # Clear startup message
+        startup_placeholder.empty()
+        
+    except Exception as e:
+        startup_placeholder.error(f"❌ Startup Error: {str(e)}")
+        st.exception(e)
     
     # ======================================================
     # AUTHENTICATION CHECK
