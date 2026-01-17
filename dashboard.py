@@ -477,13 +477,20 @@ def _init_streamlit():
     """, unsafe_allow_html=True)
 
 # ...existing API helper functions...
+# Import API functions with graceful fallback
+USE_LOCAL_API = False
+BACKEND_URL = "http://backend:8000"
+
 try:
     from api import run_optimization as local_run_optimization
     from api import explain_source as local_explain_source
     USE_LOCAL_API = True
-except ImportError:
-    USE_LOCAL_API = False
-    BACKEND_URL = "http://backend:8000"
+except ImportError as e:
+    # API module not available - will use fallback functions
+    pass
+except Exception as e:
+    # Any other import error - log but continue
+    pass
 
 def run_optimization(payload: dict):
     if USE_LOCAL_API:
@@ -4709,7 +4716,8 @@ def render_streamlit_app():
         </div>
         """, unsafe_allow_html=True)
 
-if MODE == "streamlit":
-	render_streamlit_app()
-elif __name__ == "__main__":
-	render_streamlit_app()
+# ======================================================
+# MAIN ENTRY POINT
+# ======================================================
+if __name__ == "__main__" or MODE == "streamlit":
+    render_streamlit_app()
