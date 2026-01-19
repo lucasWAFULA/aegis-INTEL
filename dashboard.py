@@ -5404,13 +5404,79 @@ def render_streamlit_app():
         
         # ========== SIMULATION SCOPE CARD ==========
         with st.expander("🧮 SIMULATION SCOPE", expanded=True):
-            num_sources = st.slider(
-                "Number of sources", 
-                1, 80,  # Full source capacity restored
-                default_sources if preset_mode != "⚙️ Custom" else min(st.session_state.sources_count, 80),
-                key="num_sources_slider",
-                help="Total intelligence sources in optimization pool (80 sources with full behavioral distribution)"
-            )
+            # Data source mode selector
+            custom_count = len(st.session_state.get("custom_sources_pool", []))
+            batch_count = len(st.session_state.get("batch_results", []))
+            total_input_count = custom_count + batch_count
+            
+            # Mode selection
+            if total_input_count > 0:
+                data_mode = st.radio(
+                    "Data Source Mode",
+                    ["🎮 Demo Mode (Generated Sources)", "📊 Real Data Mode (Your Input)"],
+                    index=0,
+                    key="data_source_mode",
+                    help="Demo Mode uses generated sources for testing. Real Data Mode analyzes only your uploaded/entered sources."
+                )
+                
+                if data_mode == "📊 Real Data Mode (Your Input)":
+                    st.markdown(f"""
+                    <div style='background: #ecfdf5; border: 1px solid #10b981; border-radius: 6px; 
+                                padding: 0.6rem; margin: 0.8rem 0;'>
+                        <p style='margin: 0; font-size: 11px; color: #047857; font-weight: 600;'>
+                            ✅ Real Data Mode Active
+                        </p>
+                        <p style='margin: 0.3rem 0 0 0; font-size: 9px; color: #065f46;'>
+                            Analyzing {total_input_count} source(s): {custom_count} single entry + {batch_count} batch upload
+                        </p>
+                    </div>
+                    """, unsafe_allow_html=True)
+                    
+                    # In real data mode, use only input sources
+                    num_sources = total_input_count
+                    st.info(f"📌 Using {num_sources} source(s) from your input data")
+                else:
+                    st.markdown("""
+                    <div style='background: #eff6ff; border: 1px solid #93c5fd; border-radius: 6px; 
+                                padding: 0.6rem; margin: 0.8rem 0;'>
+                        <p style='margin: 0; font-size: 11px; color: #1e40af; font-weight: 600;'>
+                            🎮 Demo Mode Active
+                        </p>
+                        <p style='margin: 0.3rem 0 0 0; font-size: 9px; color: #1e3a8a;'>
+                            Using generated sources for demonstration. Your input data ({total_input_count} source(s)) is saved and can be analyzed in Real Data Mode.
+                        </p>
+                    </div>
+                    """, unsafe_allow_html=True)
+                    
+                    num_sources = st.slider(
+                        "Number of sources", 
+                        1, 80,
+                        default_sources if preset_mode != "⚙️ Custom" else min(st.session_state.sources_count, 80),
+                        key="num_sources_slider",
+                        help="Total generated sources in demo pool"
+                    )
+            else:
+                # No input data, only demo mode available
+                st.markdown("""
+                <div style='background: #eff6ff; border: 1px solid #93c5fd; border-radius: 6px; 
+                            padding: 0.6rem; margin: 0.8rem 0;'>
+                    <p style='margin: 0; font-size: 11px; color: #1e40af; font-weight: 600;'>
+                        🎮 Demo Mode (No Input Data)
+                    </p>
+                    <p style='margin: 0.3rem 0 0 0; font-size: 9px; color: #1e3a8a;'>
+                        Using generated sources. Add your own data via "SOURCE DATA INPUT" to enable Real Data Mode.
+                    </p>
+                </div>
+                """, unsafe_allow_html=True)
+                
+                data_mode = "🎮 Demo Mode (Generated Sources)"
+                num_sources = st.slider(
+                    "Number of sources", 
+                    1, 80,
+                    default_sources if preset_mode != "⚙️ Custom" else min(st.session_state.sources_count, 80),
+                    key="num_sources_slider",
+                    help="Total generated sources in demo pool"
+                )
             st.markdown("<p style='font-size: 10px; color: #6b7280; margin: -0.5rem 0 0.8rem 0; font-style: italic;'>Total sources in the optimization pool</p>", unsafe_allow_html=True)
             
             st.session_state.sources_count = num_sources
@@ -5587,36 +5653,92 @@ def render_streamlit_app():
     # ======================================================
     sources = []
     
-    # First, collect source data from profiles with all 6 features
-    source_ids = [f"SRC_{k + 1:03d}" for k in range(num_sources)]
-    for i in range(num_sources):
-        rng = np.random.default_rng(i + 1)
-        tsr_default = float(np.clip(rng.beta(5, 3), 0.0, 1.0))
-        cor_default = float(np.clip(rng.beta(4, 4), 0.0, 1.0))
-        time_default = float(np.clip(rng.beta(4, 4), 0.0, 1.0))
-        handler_default = float(np.clip(rng.beta(4, 3), 0.0, 1.0))
-        dec_default = float(np.clip(rng.beta(2, 5), 0.0, 0.8))
-        ci_default = int(rng.choice([0, 1], p=[0.88, 0.12]))
+    # Determine data mode
+    data_mode = st.session_state.get("data_source_mode", "🎮 Demo Mode (Generated Sources)")
+    use_real_data = (data_mode == "📊 Real Data Mode (Your Input)")
+    
+    if use_real_data:
+        # REAL DATA MODE: Use only custom/batch input sources
+        # 1. Add custom sources from single source input
+        if "custom_sources_pool" in st.session_state and st.session_state.custom_sources_pool:
+            for custom_src in st.session_state.custom_sources_pool:
+                sources.append({
+                    "source_id": custom_src.get("source_id"),
+                    "features": custom_src.get("features"),
+                    "reliability_series": [],
+                    "recourse_rules": {}
+                })
         
-        features = {
-            "task_success_rate": float(tsr_default),
-            "corroboration_score": float(cor_default),
-            "report_timeliness": float(time_default),
-            "handler_confidence": float(handler_default),
-            "deception_score": float(dec_default),
-            "ci_flag": int(ci_default)
-        }
-        
-        sources.append({
-            "source_id": f"SRC_{i + 1:03d}",
-            "features": features,
-            "reliability_series": [],
-            "recourse_rules": {}
-        })
+        # 2. Add batch upload results
+        if "batch_results" in st.session_state and st.session_state.batch_results:
+            for batch_src in st.session_state.batch_results:
+                # Avoid duplicates
+                existing_ids = [s["source_id"] for s in sources]
+                if batch_src.get("source_id") not in existing_ids:
+                    sources.append({
+                        "source_id": batch_src.get("source_id"),
+                        "features": batch_src.get("features"),
+                        "reliability_series": [],
+                        "recourse_rules": {}
+                    })
+    else:
+        # DEMO MODE: Use only generated sources
+        for i in range(num_sources):
+            rng = np.random.default_rng(i + 1)
+            tsr_default = float(np.clip(rng.beta(5, 3), 0.0, 1.0))
+            cor_default = float(np.clip(rng.beta(4, 4), 0.0, 1.0))
+            time_default = float(np.clip(rng.beta(4, 4), 0.0, 1.0))
+            handler_default = float(np.clip(rng.beta(4, 3), 0.0, 1.0))
+            dec_default = float(np.clip(rng.beta(2, 5), 0.0, 0.8))
+            ci_default = int(rng.choice([0, 1], p=[0.88, 0.12]))
+            
+            features = {
+                "task_success_rate": float(tsr_default),
+                "corroboration_score": float(cor_default),
+                "report_timeliness": float(time_default),
+                "handler_confidence": float(handler_default),
+                "deception_score": float(dec_default),
+                "ci_flag": int(ci_default)
+            }
+            
+            sources.append({
+                "source_id": f"SRC_{i + 1:03d}",
+                "features": features,
+                "reliability_series": [],
+                "recourse_rules": {}
+            })
     
     # Show Decision Optimization Engine only on Source Profiles tab
     if nav_key == "profiles":
         with st.expander("🧠 Decision Optimization Engine", expanded=True):
+            # Data Mode Banner
+            if use_real_data:
+                st.markdown(f"""
+                <div style="background: linear-gradient(135deg, #d1fae5 0%, #a7f3d0 100%); 
+                            border-radius: 10px; padding: 0.8rem; margin-bottom: 1rem; 
+                            border: 2px solid #10b981; text-align: center;">
+                    <p style="margin: 0; font-size: 13px; font-weight: 700; color: #047857;">
+                        📊 REAL DATA MODE - Analyzing {len(sources)} Input Source(s)
+                    </p>
+                    <p style="margin: 0.3rem 0 0 0; font-size: 10px; color: #065f46;">
+                        Results based on your uploaded/entered data only
+                    </p>
+                </div>
+                """, unsafe_allow_html=True)
+            else:
+                st.markdown(f"""
+                <div style="background: linear-gradient(135deg, #dbeafe 0%, #bfdbfe 100%); 
+                            border-radius: 10px; padding: 0.8rem; margin-bottom: 1rem; 
+                            border: 2px solid #3b82f6; text-align: center;">
+                    <p style="margin: 0; font-size: 13px; font-weight: 700; color: #1e40af;">
+                        🎮 DEMO MODE - Analyzing {len(sources)} Generated Source(s)
+                    </p>
+                    <p style="margin: 0.3rem 0 0 0; font-size: 10px; color: #1e3a8a;">
+                        Using simulated data for demonstration
+                    </p>
+                </div>
+                """, unsafe_allow_html=True)
+            
             st.markdown("""
             <div style="background:linear-gradient(135deg, #ffffff 0%, #f8fafc 100%);border-radius:15px;padding:1.8rem;
                         box-shadow:0 4px 15px rgba(0,0,0,0.12);border:1px solid #cbd5e1;
