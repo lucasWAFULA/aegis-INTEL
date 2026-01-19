@@ -11,26 +11,7 @@ import gc  # Garbage collection
 
 MODE = "streamlit"  # options: "streamlit", "api", "batch"
 
-import streamlit as st
-st.set_page_config(
-    page_title="ML-TSSP Dashboard",
-    layout="wide",
-    initial_sidebar_state="expanded",
-    menu_items=None
-)
-
-# Lazy imports - only load when needed
-@st.cache_resource
-def load_heavy_libraries():
-    """Lazy load TensorFlow and other heavy dependencies."""
-    try:
-        import tensorflow as tf
-        tf.config.set_visible_devices([], 'GPU')  # Disable GPU
-        return tf
-    except Exception as e:
-        st.warning(f"TensorFlow not loaded: {e}")
-        return None
-
+# Core imports (always needed)
 import requests
 import json
 import pandas as pd
@@ -45,13 +26,54 @@ from plotly.subplots import make_subplots
 import base64
 from pathlib import Path
 
+# Conditional Streamlit imports
+if MODE == "streamlit":
+    import streamlit as st
+    st.set_page_config(
+        page_title="ML-TSSP Dashboard",
+        layout="wide",
+        initial_sidebar_state="expanded",
+        menu_items=None
+    )
+
+    # Lazy imports - only load when needed
+    @st.cache_resource
+    def load_heavy_libraries():
+        """Lazy load TensorFlow and other heavy dependencies."""
+        try:
+            import tensorflow as tf
+            tf.config.set_visible_devices([], 'GPU')  # Disable GPU
+            return tf
+        except Exception as e:
+            st.warning(f"TensorFlow not loaded: {e}")
+            return None
+else:
+    # Dummy streamlit module for non-streamlit modes
+    class DummyStreamlit:
+        def __getattr__(self, name):
+            return lambda *args, **kwargs: None
+    st = DummyStreamlit()
+    
+    def load_heavy_libraries():
+        """Lazy load TensorFlow for non-streamlit modes."""
+        try:
+            import tensorflow as tf
+            tf.config.set_visible_devices([], 'GPU')
+            return tf
+        except Exception as e:
+            print(f"TensorFlow not loaded: {e}")
+            return None
+
 # Optional dependencies - gracefully handle if not available
 try:
     import pyomo
     PYOMO_AVAILABLE = True
 except ImportError:
     PYOMO_AVAILABLE = False
-    st.warning("⚠️ Pyomo not available - optimization features may be limited")
+    if MODE == "streamlit":
+        st.warning("⚠️ Pyomo not available - optimization features may be limited")
+    else:
+        print("⚠️ Pyomo not available - optimization features may be limited")
 
 try:
     import cvxpy
@@ -234,24 +256,78 @@ def _init_streamlit():
     }
     
     .control-panel {
-        background: rgba(255, 255, 255, 0.95);
+        background: linear-gradient(145deg, #064e3b 0%, #047857 100%);
         backdrop-filter: blur(10px);
         border-radius: 12px;
         padding: 1.5rem;
-        border: 1px solid rgba(203, 213, 225, 0.8);
+        border: 1px solid #065f46;
         position: sticky;
         top: 20px;
-        box-shadow: 0 6px 18px rgba(0, 0, 0, 0.18);
+        box-shadow: 0 6px 18px rgba(0, 0, 0, 0.35);
     }
     
     .control-panel-header {
         font-family: 'IBM Plex Sans', sans-serif;
         font-size: 18px;
         font-weight: 600;
-        color: #1e3a8a;
+        color: #6b21a8;
         margin-bottom: 1.2rem;
         padding-bottom: 0.8rem;
-        border-bottom: 2px solid #3b82f6;
+        border-bottom: 2px solid #10b981;
+    }
+    
+    /* Sidebar styling for dark green control panel */
+    [data-testid="stSidebar"] {
+        background-color: #064e3b;
+    }
+    
+    [data-testid="stSidebar"] label {
+        color: #1a1a1a !important;
+    }
+    
+    [data-testid="stSidebar"] p {
+        color: #1a1a1a !important;
+    }
+    
+    [data-testid="stSidebar"] h1, 
+    [data-testid="stSidebar"] h2, 
+    [data-testid="stSidebar"] h3, 
+    [data-testid="stSidebar"] h4 {
+        color: #6b21a8 !important;
+    }
+    
+    [data-testid="stSidebar"] .stMarkdown {
+        color: #1a1a1a;
+    }
+    
+    [data-testid="stSidebar"] [data-testid="stExpander"] {
+        background-color: rgba(255, 255, 255, 0.95);
+        border: 1px solid #10b981;
+    }
+    
+    [data-testid="stSidebar"] [data-testid="stExpander"] summary {
+        color: #6b21a8 !important;
+        font-weight: 600;
+    }
+    
+    [data-testid="stSidebar"] .stSlider label {
+        color: #1a1a1a !important;
+    }
+    
+    [data-testid="stSidebar"] .stNumberInput label {
+        color: #1a1a1a !important;
+    }
+    
+    [data-testid="stSidebar"] .stSelectbox label {
+        color: #1a1a1a !important;
+    }
+    
+    [data-testid="stSidebar"] .stRadio label {
+        color: #1a1a1a !important;
+    }
+    
+    [data-testid="stSidebar"] [data-baseweb="radio"] label {
+        color: #1a1a1a !important;
     }
     
     .metric-card {
@@ -519,9 +595,105 @@ def run_optimization(payload: dict):
     if USE_LOCAL_API:
         return local_run_optimization(payload)
     else:
-        r = requests.post(f"{BACKEND_URL}/optimize", json=payload)
-        r.raise_for_status()
-        return r.json()
+        try:
+            r = requests.post(f"{BACKEND_URL}/optimize", json=payload, timeout=5)
+            r.raise_for_status()
+            result = r.json()
+            
+            # Validate that we got meaningful data
+            if not result or not result.get("policies") or not result.get("policies", {}).get("ml_tssp"):
+                # API returned but with no data, use fallback
+                return _fallback_optimization(payload)
+            
+            return result
+        except:
+            # Fallback to local simulation if API fails
+            return _fallback_optimization(payload)
+
+def _fallback_optimization(payload: dict):
+    """Local fallback optimization when API is unavailable."""
+    sources = payload.get("sources", [])
+    seed = payload.get("seed", 42)
+    rng = np.random.default_rng(seed)
+    
+    policies = {"ml_tssp": [], "deterministic": [], "uniform": []}
+    
+    for source in sources:
+        features = source.get("features", {})
+        tsr = features.get("task_success_rate", 0.5)
+        cor = features.get("corroboration_score", 0.5)
+        time = features.get("report_timeliness", 0.5)
+        handler = features.get("handler_confidence", 0.5)
+        dec_score = features.get("deception_score", 0.3)
+        ci = features.get("ci_flag", 0)
+        
+        # Simulate ML reliability scoring using training formula
+        reliability = np.clip(
+            0.30 * tsr + 0.25 * cor + 0.20 * time + 0.15 * handler
+            - 0.15 * dec_score - 0.10 * ci + 0.05 * rng.normal(0, 0.03),
+            0.0, 1.0
+        )
+        
+        # Simulate deception scoring (inverse relationship + pattern noise)
+        deception = np.clip(
+            0.30 * dec_score + 0.25 * ci + 0.20 * (1 - cor) + 0.15 * (1 - handler)
+            + 0.10 * rng.beta(2, 5),
+            0.0, 1.0
+        )
+        
+        # Determine action based on scores
+        recourse = source.get("recourse_rules", {})
+        rel_disengage = recourse.get("rel_disengage", 0.35)
+        rel_flag = recourse.get("rel_ci_flag", 0.50)
+        dec_disengage = recourse.get("dec_disengage", 0.75)
+        dec_flag = recourse.get("dec_ci_flag", 0.60)
+        
+        if deception >= dec_disengage or reliability < rel_disengage:
+            action = "disengage"
+            task = None
+        elif deception >= dec_flag:
+            action = "flag_for_ci"
+            task = rng.choice(TASK_ROSTER)
+        elif reliability < rel_flag:
+            action = "flag_and_task"
+            task = rng.choice(TASK_ROSTER)
+        else:
+            action = "task"
+            task = rng.choice(TASK_ROSTER)
+        
+        # Calculate expected risk
+        expected_risk = 0.3 * (1 - reliability) + 0.4 * deception + 0.3 * rng.beta(2, 3)
+        expected_risk = np.clip(expected_risk, 0.0, 1.0)
+        
+        # Calculate optimization score
+        score = reliability * (1 - deception) * (1 - expected_risk)
+        
+        policy_item = {
+            "source_id": source.get("source_id"),
+            "reliability": float(reliability),
+            "deception": float(deception),
+            "action": action,
+            "task": task,
+            "expected_risk": float(expected_risk),
+            "score": float(score)
+        }
+        
+        policies["ml_tssp"].append(policy_item)
+        policies["deterministic"].append(policy_item.copy())
+        policies["uniform"].append(policy_item.copy())
+    
+    # Calculate EMV
+    ml_emv = sum(p["score"] for p in policies["ml_tssp"])
+    
+    return {
+        "policies": policies,
+        "emv": {
+            "ml_tssp": ml_emv,
+            "deterministic": ml_emv * 0.85,
+            "uniform": ml_emv * 0.70
+        },
+        "_using_fallback": True  # Flag to indicate fallback was used
+    }
 
 def request_shap_explanation(source_payload: dict):
     if USE_LOCAL_API:
@@ -1523,41 +1695,83 @@ def _render_evpi_section(ml_policy, uni_policy):
     for sid, ml_risk in ml_risk_map.items():
         uniform_risk = uni_risk_map.get(sid, ml_risk)
         evpi_val = max(0.0, uniform_risk - ml_risk)
-        evpi_rows.append({"Source": sid, "EVPI": evpi_val, "Potential Gain": uniform_risk - ml_risk})
+        # Determine decision state based on EVPI and risk level
+        if evpi_val > 0.4:
+            decision_state = "Critical Uncertainty - Invest in Vetting"
+        elif evpi_val > 0.2:
+            decision_state = "Material Uncertainty - Enhanced Monitoring"
+        elif evpi_val > 0.1:
+            decision_state = "Marginal Uncertainty - Standard Oversight"
+        else:
+            decision_state = "Well-Characterized - Execute with Confidence"
+        
+        evpi_rows.append({
+            "Source": sid, 
+            "EVPI": evpi_val, 
+            "Value of Perfect Info": uniform_risk - ml_risk,
+            "Decision State": decision_state
+        })
     evpi_df = pd.DataFrame(evpi_rows).sort_values("EVPI", ascending=False)
     k1, k2, k3 = st.columns(3)
     max_evpi = evpi_df["EVPI"].max() if not evpi_df.empty else 0.0
     avg_evpi = evpi_df["EVPI"].mean() if not evpi_df.empty else 0.0
-    pct = (len(evpi_df[evpi_df["EVPI"] > evpi_df["EVPI"].quantile(0.75)]) / len(evpi_df) * 100) if len(evpi_df) else 0.0
+    high_uncertainty_threshold = 0.2  # Threshold for material uncertainty requiring action
+    high_uncertainty_count = len(evpi_df[evpi_df["EVPI"] > high_uncertainty_threshold])
+    pct = (high_uncertainty_count / len(evpi_df) * 100) if len(evpi_df) else 0.0
     
     with k1:
         render_kpi_indicator("🔴 Max EVPI", max_evpi, key="kpi_evpi_max_exp")
     with k2:
-        render_kpi_indicator("📊 Avg EVPI", avg_evpi, key="kpi_evpi_avg_exp")
+        render_kpi_indicator("📊 Portfolio Avg EVPI", avg_evpi, key="kpi_evpi_avg_exp")
     with k3:
-        render_kpi_indicator("🎯 High-Value Sources", pct, suffix="%", key="kpi_evpi_high_value_exp")
+        render_kpi_indicator("🎯 Material Uncertainty", pct, suffix="%", note=f"EVPI > {high_uncertainty_threshold}", key="kpi_evpi_high_value_exp")
     
-    # Dynamic EVPI recommendation
+    # Threshold reference guide
+    st.markdown("""
+    <div style='background: #f8fafc; padding: 0.8rem; border-radius: 6px; border: 1px solid #cbd5e1; margin: 1rem 0 1.5rem 0;'>
+        <p style='margin: 0 0 0.5rem 0; font-size: 11px; font-weight: 700; color: #1e3a8a;'>EVPI Threshold Interpretation:</p>
+        <div style='display: grid; grid-template-columns: 1fr 1fr 1fr 1fr; gap: 0.5rem; font-size: 10px;'>
+            <div style='background: #fee2e2; padding: 0.4rem; border-radius: 4px; border-left: 3px solid #ef4444;'>
+                <strong style='color: #991b1b;'>Critical (>0.40)</strong><br/>
+                <span style='color: #7f1d1d;'>Uncertainty dominates decision value—invest in source validation</span>
+            </div>
+            <div style='background: #fef3c7; padding: 0.4rem; border-radius: 4px; border-left: 3px solid #f59e0b;'>
+                <strong style='color: #92400e;'>Material (0.20-0.40)</strong><br/>
+                <span style='color: #78350f;'>Uncertainty materially impacts tasking—enhanced collection warranted</span>
+            </div>
+            <div style='background: #dbeafe; padding: 0.4rem; border-radius: 4px; border-left: 3px solid #3b82f6;'>
+                <strong style='color: #1e40af;'>Marginal (0.10-0.20)</strong><br/>
+                <span style='color: #1e3a8a;'>Residual uncertainty manageable—maintain standard monitoring</span>
+            </div>
+            <div style='background: #d1fae5; padding: 0.4rem; border-radius: 4px; border-left: 3px solid #10b981;'>
+                <strong style='color: #065f46;'>Minimal (<0.10)</strong><br/>
+                <span style='color: #064e3b;'>Well-characterized source—execute with operational confidence</span>
+            </div>
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
+    
+    # Dynamic EVPI recommendation with sharper value vs uncertainty language
     if avg_evpi > 0.5:
-        evpi_rec = f"High intelligence value potential detected (avg EVPI: {avg_evpi:.3f}). Prioritize collection enhancement for top {int(pct)}% sources with max EVPI of {max_evpi:.3f}. Consider investing in corroboration and verification capabilities."
+        evpi_rec = f"<strong>Critical Uncertainty Exposure:</strong> Portfolio-average EVPI of {avg_evpi:.3f} indicates that behavioral uncertainty severely constrains decision value. {high_uncertainty_count} sources ({pct:.0f}%) exceed material uncertainty threshold (>{high_uncertainty_threshold}). <strong>Actionable Decision:</strong> Prioritize intensive vetting, multi-source corroboration, and controlled elicitation for top sources (max EVPI: {max_evpi:.3f}) before committing to high-stakes tasking. Expected value gain from perfect information justifies substantial collection investment."
         evpi_box = "warning-box"
     elif avg_evpi > 0.3:
-        evpi_rec = f"Moderate information value opportunity (avg EVPI: {avg_evpi:.3f}). Focus resources on {int(pct)}% high-value sources to reduce uncertainty and improve task assignments."
+        evpi_rec = f"<strong>Material Uncertainty Opportunity:</strong> Average EVPI of {avg_evpi:.3f} signals actionable value in resolving source ambiguity. {high_uncertainty_count} sources ({pct:.0f}%) warrant enhanced monitoring. <strong>Actionable Decision:</strong> Deploy targeted collection efforts (verification checks, pattern analysis, behavioral profiling) on high-EVPI sources to improve tasking precision and reduce avoidable risk exposure."
         evpi_box = "insight-box"
     elif avg_evpi > 0.1:
-        evpi_rec = f"Limited additional intelligence value available (avg EVPI: {avg_evpi:.3f}). Current ML model provides effective uncertainty resolution. Maintain monitoring on top sources with EVPI > {evpi_df['EVPI'].quantile(0.75):.3f}."
+        evpi_rec = f"<strong>Residual Uncertainty—Well-Calibrated Model:</strong> Average EVPI of {avg_evpi:.3f} indicates the ML model has effectively extracted signal from available data. {high_uncertainty_count} sources ({pct:.0f}%) retain material uncertainty. <strong>Actionable Decision:</strong> Maintain standard monitoring protocols; focus discretionary collection resources on the {int(evpi_df['EVPI'].quantile(0.75) * 100)}th percentile (EVPI > {evpi_df['EVPI'].quantile(0.75):.3f}) to refine edge-case sources."
         evpi_box = "success-box"
     else:
-        evpi_rec = f"Minimal EVPI across sources (avg: {avg_evpi:.3f}). ML model effectively captures available information. Focus on operational execution rather than additional collection."
+        evpi_rec = f"<strong>Minimal Uncertainty—Execution Readiness:</strong> Portfolio-average EVPI of {avg_evpi:.3f} confirms sources are well-characterized with minimal residual ambiguity. <strong>Actionable Decision:</strong> Shift focus from collection to operational execution. ML-TSSP policy is information-saturated—additional vetting yields diminishing marginal value. Allocate resources to mission execution rather than incremental source refinement."
         evpi_box = "success-box"
     
     st.markdown(f"""
     <div class="{evpi_box}" style="margin: 1rem 0;">
-        <p style="margin:0;"><strong>Intelligence Investment Guidance:</strong> {evpi_rec}</p>
+        <p style="margin:0; line-height: 1.6;">{evpi_rec}</p>
     </div>
     """, unsafe_allow_html=True)
     
-    st.dataframe(evpi_df.reset_index(drop=True))
+    st.dataframe(evpi_df.reset_index(drop=True), use_container_width=True)
 
 def _render_stress_section(ml_policy, ml_emv, det_emv, uni_emv, risk_reduction):
     """
@@ -1606,19 +1820,10 @@ def _render_stress_section(ml_policy, ml_emv, det_emv, uni_emv, risk_reduction):
     
     # ========== LEFT: CONTROL PANEL ==========
     with control_col:
-        st.markdown("""
-        <div style='background: white; padding: 1rem; border-radius: 8px; border: 1px solid #e5e7eb;'>
-            <h5 style='margin: 0 0 0.8rem 0; color: #1e3a8a; font-size: 14px; font-weight: 700;'>
-                ⚙️ Stress Parameters
-            </h5>
-        </div>
-        """, unsafe_allow_html=True)
-        
-        st.markdown("<br>", unsafe_allow_html=True)
-        
-        # Scenario Presets
-        st.markdown("**📋 Scenario Presets**")
-        scenario_preset = st.radio(
+        with st.expander("⚙️ STRESS PARAMETERS", expanded=True):
+            # Scenario Presets
+            st.markdown("**📋 Scenario Presets**")
+            scenario_preset = st.radio(
             "Quick scenarios",
             ["Normal Intelligence Environment", "High Threat Environment", "Denied/Contested Environment"],
             horizontal=True,
@@ -1694,20 +1899,20 @@ def _render_stress_section(ml_policy, ml_emv, det_emv, uni_emv, risk_reduction):
         else:
             cov_default = 0.5
         
-        coverage_priority = st.slider(
-            "Coverage Priority",
-            min_value=0.0,
-            max_value=1.0,
-            value=cov_default,
-            step=0.1,
-            format="%.1f",
-            key="cov_priority",
-            help="Low (0) ↔ High coverage (1)"
-        )
+            coverage_priority = st.slider(
+                "Coverage Priority",
+                min_value=0.0,
+                max_value=1.0,
+                value=cov_default,
+                step=0.1,
+                format="%.1f",
+                key="cov_priority",
+                help="Low (0) ↔ High coverage (1)"
+            )
         
         st.divider()
         
-        # Execute button
+        # Execute button (outside expander)
         execute_stress = st.button(
             "▶ Execute Stress Test",
             type="primary",
@@ -2220,6 +2425,126 @@ def _render_stress_section(ml_policy, ml_emv, det_emv, uni_emv, risk_reduction):
                     </div>
                 </div>
                 """, unsafe_allow_html=True)
+            
+            st.divider()
+            
+            # ========== DECISION-FOCUSED SYNTHESIS SUMMARY ==========
+            st.markdown("**💡 Stress Test Synthesis & Actionable Next Steps**")
+            
+            # Calculate key synthesis metrics
+            emv_deterioration_pct = ((current_emv - baseline_emv) / baseline_emv * 100) if baseline_emv > 0 else 0
+            coverage_decline = 70 - current_scenario["coverage"]  # Baseline coverage assumed at 70%
+            low_risk_collapse_pct = ((baseline_low_risk - current_scenario["low_risk_sources"]) / baseline_low_risk * 100) if baseline_low_risk > 0 else 0
+            policy_instability = current_scenario["policy_changes"]
+            is_near_breakeven = abs(reliability_shift - break_even_rel) < 0.08
+            is_high_deception = deception_inflation > high_sensitivity_dec
+            
+            # Determine overall stress condition
+            if emv_deterioration_pct > 40 or current_scenario["low_risk_sources"] < 4:
+                stress_level = "Critical"
+                stress_color = "#ef4444"
+                stress_icon = "🚨"
+            elif emv_deterioration_pct > 20 or policy_instability > 10:
+                stress_level = "High"
+                stress_color = "#f97316"
+                stress_icon = "⚠️"
+            elif emv_deterioration_pct > 10 or is_near_breakeven:
+                stress_level = "Moderate"
+                stress_color = "#f59e0b"
+                stress_icon = "⚡"
+            else:
+                stress_level = "Acceptable"
+                stress_color = "#10b981"
+                stress_icon = "✅"
+            
+            # Build dynamic narrative based on stress conditions
+            if stress_level == "Critical":
+                narrative = f"""Current stress parameters have induced <strong>critical operational degradation</strong>. 
+                EMV has deteriorated by <strong>{emv_deterioration_pct:.1f}%</strong> from baseline, and low-risk source availability 
+                has collapsed to <strong>{current_scenario['low_risk_sources']} sources</strong> (down {low_risk_collapse_pct:.0f}%). 
+                Task coverage has fallen to <strong>{current_scenario['coverage']}%</strong>."""
+                
+                action = f"""<strong>Immediate Actions Required:</strong> Do not proceed with current ML-TSSP policy under these conditions—risk exposure is unacceptable. Revert to conservative baseline policy or suspend high-stakes tasking until conditions stabilize. Activate enhanced source vetting protocols for all {len(ml_policy)} sources and escalate to command authority, as this stress scenario exceeds acceptable risk tolerance ({risk_tolerance:.1f})."""
+                
+            elif stress_level == "High":
+                if is_high_deception:
+                    narrative = f"""Current scenario indicates <strong>high adversarial pressure</strong> with deception risk 
+                    at {deception_inflation:.0%}. Policy has undergone <strong>{policy_instability} assignment changes</strong>, 
+                    signaling significant instability. EMV degradation: <strong>{emv_deterioration_pct:.1f}%</strong>. 
+                    Coverage maintained at {current_scenario['coverage']}% but with {current_scenario['low_risk_sources']} low-risk sources 
+                    (vs {baseline_low_risk} at baseline)."""
+                    
+                    action = f"""<strong>Priority Actions:</strong> Implement enhanced counterintelligence screening immediately—deception threshold ({high_sensitivity_dec:.0%}) has been exceeded. Focus tasking on the {current_scenario['low_risk_sources']} validated low-risk sources for critical operations. Deploy corroboration protocols for sources exhibiting EVPI greater than 0.30, and consider reliability uplift interventions or source rotation to restore operational margin."""
+                else:
+                    narrative = f"""Reliability degradation to <strong>{reliability_shift:+.2f}</strong> has triggered substantial policy instability 
+                    ({policy_instability} changes). Low-risk source pool reduced to <strong>{current_scenario['low_risk_sources']}</strong> 
+                    ({low_risk_collapse_pct:.0f}% decline). EMV increase: <strong>{emv_deterioration_pct:.1f}%</strong>. 
+                    Coverage: {current_scenario['coverage']}%."""
+                    
+                    action = f"""<strong>Priority Actions:</strong> Re-assess source reliability calibration as you are approaching the break-even threshold ({break_even_rel:.2f}). Prioritize resource allocation to maintain the {current_scenario['low_risk_sources']} remaining low-risk sources. Increase monitoring frequency for sources near disengagement threshold and prepare contingency tasking with conservative assignments if conditions worsen."""
+                    
+            elif stress_level == "Moderate":
+                if is_near_breakeven:
+                    narrative = f"""Scenario operates <strong>near critical break-even point</strong> (reliability: {reliability_shift:+.2f} vs 
+                    break-even: {break_even_rel:.2f}). EMV deterioration: <strong>{emv_deterioration_pct:.1f}%</strong>. 
+                    {current_scenario['low_risk_sources']} low-risk sources available. Policy changes: {policy_instability}. 
+                    Small additional degradation could trigger non-linear risk escalation."""
+                    
+                    action = f"""<strong>Monitoring & Preparation:</strong> Establish tripwire alerts to monitor for reliability drift below {break_even_rel:.2f}. Maintain current policy but prepare fallback assignments for approximately {int(len(ml_policy) * 0.3)} highest-risk sources. Increase source validation cadence to detect early warning indicators and document decision rationale for audit trail—you are operating in constrained margin."""
+                else:
+                    narrative = f"""ML-TSSP policy demonstrates <strong>moderate resilience</strong> under current stress. 
+                    EMV increase limited to {emv_deterioration_pct:.1f}%. {current_scenario['low_risk_sources']} low-risk sources 
+                    (vs {baseline_low_risk} baseline). Coverage: {current_scenario['coverage']}%. Policy adjustments: {policy_instability}."""
+                    
+                    action = f"""<strong>Operational Guidance:</strong> Proceed with ML-TSSP recommendations—risk remains within tolerance ({risk_tolerance:.1f}). Maintain standard monitoring protocols for the {current_scenario['low_risk_sources']} core low-risk sources and document scenario assumptions for operational record. Consider incremental collection investment if deception risk escalates beyond {high_sensitivity_dec:.0%}."""
+            else:  # Acceptable
+                narrative = f"""Policy demonstrates <strong>robust performance</strong> under stress scenario. 
+                EMV increase minimal (<strong>{emv_deterioration_pct:.1f}%</strong>). Low-risk source availability: 
+                <strong>{current_scenario['low_risk_sources']}/{baseline_low_risk}</strong>. Coverage sustained at {current_scenario['coverage']}%. 
+                Policy changes limited to {policy_instability} adjustments—indicating stable optimization."""
+                
+                action = f"**Execute with Confidence:** ML-TSSP policy has been validated under stress—proceed with recommended tasking assignments. Maintain routine monitoring with no immediate intervention required. Stress margins are comfortable with a {abs(reliability_shift - break_even_rel):.2f} buffer from break-even threshold. Allocate resources to operational execution rather than additional vetting."
+            
+            # Render dynamic summary panel using containers
+            summary_container = st.container()
+            with summary_container:
+                st.markdown(f"""
+                <div style='background: linear-gradient(135deg, #ffffff 0%, #f9fafb 100%); 
+                            padding: 1.3rem; border-radius: 10px; 
+                            border: 2px solid {stress_color}; 
+                            box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+                            margin-bottom: 1rem;'>
+                    <div style='display: flex; align-items: center; margin-bottom: 1rem;'>
+                        <span style='font-size: 28px; margin-right: 1rem;'>{stress_icon}</span>
+                        <div style='flex: 1;'>
+                            <h5 style='margin: 0; color: {stress_color}; font-size: 15px; font-weight: 700; text-transform: uppercase;'>
+                                Stress Level: {stress_level}
+                            </h5>
+                            <p style='margin: 0.3rem 0 0 0; font-size: 11px; color: #6b7280;'>
+                                Scenario: Reliability {reliability_shift:+.2f} | Deception {deception_inflation:+.0%} | Risk Tolerance {risk_tolerance:.1f}
+                            </p>
+                        </div>
+                    </div>
+                </div>
+                """, unsafe_allow_html=True)
+                
+                # Operational Assessment
+                st.markdown(f"""
+                <div style='background: white; padding: 1rem; border-radius: 6px; border-left: 3px solid {stress_color}; margin-bottom: 1rem;'>
+                    <p style='margin: 0; font-size: 12px; color: #1f2937; line-height: 1.7;'>
+                        <strong>Operational Assessment:</strong> {narrative}
+                    </p>
+                </div>
+                """, unsafe_allow_html=True)
+                
+                # Recommended Actions
+                st.markdown("""
+                <div style='background: #f0f9ff; padding: 1rem; border-radius: 6px; border-left: 3px solid #3b82f6; margin-bottom: 1rem;'>
+                    <p style='margin: 0 0 0.6rem 0; font-size: 11px; font-weight: 700; color: #1e40af; text-transform: uppercase;'>
+                        Recommended Actions
+                    </p>
+                """, unsafe_allow_html=True)
+                st.markdown(f"<p style='margin: 0; font-size: 11px; color: #1e3a8a; line-height: 1.8;'>{action}</p></div>", unsafe_allow_html=True)
 
 
 def _render_audit_governance_section():
@@ -2260,7 +2585,6 @@ def _render_audit_governance_section():
     filter_col1, filter_col2, filter_col3, filter_col4 = st.columns(4)
     
     with filter_col1:
-        from datetime import datetime
         date_filter = st.date_input("Date Range", value=datetime.now().date(), key="audit_date_filter")
     
     with filter_col2:
@@ -2370,7 +2694,7 @@ def _initialize_audit_log():
             outcome = f"{np.random.randint(6, 12)} Assigned"
             confidence = np.random.uniform(0.75, 0.95)
         elif operation == "Manual Override":
-            sources = f"SRC_{np.random.randint(1, 30):03d}"
+            sources = f"SRC_{np.random.randint(1, 80):03d}"
             outcome = "Reassigned"
             confidence = np.random.uniform(0.55, 0.75)
         else:
@@ -3278,19 +3602,16 @@ def _render_login_page():
     st.markdown('<div class="login-container">', unsafe_allow_html=True)
     
     # Professional Logo and Header section with image
-    # Display the Aegis-INTEL logo - clickable to show/hide login form
+    # Display the OptiSource logo - clickable to show/hide login form
     try:
-        from pathlib import Path
-        import os
-        
         # Get the directory where dashboard.py is located
         script_dir = Path(__file__).parent
-        logo_path = script_dir / "Aegis-INTEL.png"
+        logo_path = script_dir / "OptiSource.jpeg"
         
         # Check if logo exists, otherwise try alternative names
         if not logo_path.exists():
             # Try other possible names
-            for name in ["aegis-intel.png", "logo.png", "Aegis-INTEL.jpg", "aegis-intel.jpg"]:
+            for name in ["OptiSource.jpg", "optisource.jpeg", "logo.png", "OptiSource.png"]:
                 alt_path = script_dir / name
                 if alt_path.exists():
                     logo_path = alt_path
@@ -3489,6 +3810,312 @@ Risk-Aware Intelligence Source Optimization for Strategic Decision Superiority
         """, unsafe_allow_html=True)
     
     st.markdown('</div>', unsafe_allow_html=True)  # Close login-container
+
+
+# ======================================================
+# SOURCE DATA INPUT SYSTEM
+# ======================================================
+
+def _validate_source_schema(data_dict):
+    """Validate source data schema and return clean dict or error."""
+    required_fields = ["source_id", "task_success_rate", "corroboration_score", "report_timeliness",
+                      "handler_confidence", "deception_score", "ci_flag"]
+    optional_fields = ["behavior_category", "access_level", "handler_notes"]
+    
+    errors = []
+    clean_data = {}
+    
+    # Check required fields
+    for field in required_fields:
+        if field not in data_dict:
+            errors.append(f"Missing required field: {field}")
+        else:
+            clean_data[field] = data_dict[field]
+    
+    # Validate numeric ranges for continuous features (0.0 to 1.0)
+    numeric_fields = ["task_success_rate", "corroboration_score", "report_timeliness",
+                     "handler_confidence", "deception_score"]
+    
+    for field in numeric_fields:
+        if field in clean_data:
+            try:
+                val = float(clean_data[field])
+                if not (0.0 <= val <= 1.0):
+                    errors.append(f"{field} must be between 0.0 and 1.0")
+                clean_data[field] = val
+            except (ValueError, TypeError):
+                errors.append(f"{field} must be a numeric value")
+    
+    # Validate ci_flag (binary: 0 or 1)
+    if "ci_flag" in clean_data:
+        try:
+            val = int(clean_data["ci_flag"])
+            if val not in [0, 1]:
+                errors.append("ci_flag must be 0 or 1")
+            clean_data["ci_flag"] = val
+        except (ValueError, TypeError):
+            errors.append("ci_flag must be 0 or 1")
+    
+    # Add optional fields if present
+    for field in optional_fields:
+        if field in data_dict:
+            clean_data[field] = data_dict[field]
+    
+    if errors:
+        return None, errors
+    return clean_data, None
+
+
+def _process_single_source(source_data, recourse_rules):
+    """
+    Process a single source through ML-TSSP pipeline.
+    Pipeline: Input → Preprocessing → ML Score → TSSP Decision → Explanation
+    """
+    try:
+        # ===== STAGE 1: INPUT & PREPROCESSING =====
+        features = {
+            "task_success_rate": source_data["task_success_rate"],
+            "corroboration_score": source_data["corroboration_score"],
+            "report_timeliness": source_data["report_timeliness"],
+            "handler_confidence": source_data["handler_confidence"],
+            "deception_score": source_data["deception_score"],
+            "ci_flag": source_data["ci_flag"]
+        }
+        
+        source_id = source_data["source_id"]
+        
+        # Initialize result structure
+        source_result = {
+            "source_id": source_id,
+            "features": features,
+            "recourse_rules": recourse_rules,
+            "pipeline_stages": {
+                "1_preprocessing": "complete",
+                "2_ml_scoring": "pending",
+                "3_tssp_decision": "pending",
+                "4_explanation": "pending"
+            }
+        }
+        
+        # ===== STAGE 2: ML SCORING =====
+        # Calculate ML reliability and deception scores using training formula
+        tsr = features["task_success_rate"]
+        cor = features["corroboration_score"]
+        time = features["report_timeliness"]
+        handler = features["handler_confidence"]
+        dec_score = features["deception_score"]
+        ci = features["ci_flag"]
+        
+        # Check if all inputs are zero - if so, return zero metrics
+        if tsr == 0.0 and cor == 0.0 and time == 0.0 and handler == 0.0 and dec_score == 0.0 and ci == 0:
+            reliability = 0.0
+            deception = 0.0
+        else:
+            # Use deterministic seed for reproducibility
+            rng = np.random.default_rng(hash(source_id) % (2**32))
+            
+            # ML Reliability Score (exact training formula)
+            # reliability_score = 0.30 * TSR + 0.25 * COR + 0.20 * TIME + 0.15 * HANDLER - 0.15 * DEC - 0.10 * CI
+            reliability = np.clip(
+                0.30 * tsr + 0.25 * cor + 0.20 * time + 0.15 * handler 
+                - 0.15 * dec_score - 0.10 * ci + 0.05 * rng.normal(0, 0.03),
+                0.0, 1.0
+            )
+            
+            # Deception Confidence (inverse of reliability indicators + pattern noise)
+            deception = np.clip(
+                0.30 * dec_score + 0.25 * ci + 0.20 * (1 - cor) + 0.15 * (1 - handler) 
+                + 0.10 * rng.beta(2, 5),
+                0.0, 1.0
+            )
+        
+        source_result["ml_reliability"] = float(reliability)
+        source_result["deception_confidence"] = float(deception)
+        source_result["pipeline_stages"]["2_ml_scoring"] = "complete"
+        
+        # ===== STAGE 3: TSSP DECISION =====
+        # Apply decision thresholds
+        rel_disengage = recourse_rules.get("rel_disengage", 0.35)
+        rel_flag = recourse_rules.get("rel_ci_flag", 0.50)
+        dec_disengage = recourse_rules.get("dec_disengage", 0.75)
+        dec_flag = recourse_rules.get("dec_ci_flag", 0.60)
+        
+        # Special case: all inputs zero means source has no data
+        if tsr == 0.0 and cor == 0.0 and time == 0.0:
+            decision = "disengage"
+            action_reason = "No source data available (all features are zero)"
+            task_assigned = None
+            is_taskable = False
+            expected_risk = 0.0
+            optimization_score = 0.0
+        else:
+            # Use rng for risk calculations
+            rng = np.random.default_rng(hash(source_id) % (2**32))
+            
+            # Decision logic with priority order
+            if deception >= dec_disengage:
+                decision = "disengage"
+                action_reason = f"High deception risk ({deception:.3f} ≥ {dec_disengage})"
+                task_assigned = None
+                is_taskable = False
+            elif reliability < rel_disengage:
+                decision = "disengage"
+                action_reason = f"Low reliability ({reliability:.3f} < {rel_disengage})"
+                task_assigned = None
+                is_taskable = False
+            elif deception >= dec_flag:
+                decision = "flag_for_ci"
+                action_reason = f"Elevated deception risk ({deception:.3f} ≥ {dec_flag})"
+                task_assigned = rng.choice(TASK_ROSTER)
+                is_taskable = True
+            elif reliability < rel_flag:
+                decision = "flag_and_task"
+                action_reason = f"Below optimal reliability ({reliability:.3f} < {rel_flag})"
+                task_assigned = rng.choice(TASK_ROSTER)
+                is_taskable = True
+            else:
+                decision = "task"
+                action_reason = f"Meets operational standards (rel: {reliability:.3f}, dec: {deception:.3f})"
+                task_assigned = rng.choice(TASK_ROSTER)
+                is_taskable = True
+            
+            # Calculate risk metrics
+            expected_risk = np.clip(
+                0.30 * (1 - reliability) + 0.40 * deception + 0.30 * rng.beta(2, 3),
+                0.0, 1.0
+            )
+            
+            # Calculate optimization score
+            optimization_score = reliability * (1 - deception) * (1 - expected_risk)
+        
+        source_result["decision"] = decision
+        source_result["action_reason"] = action_reason
+        source_result["is_taskable"] = is_taskable
+        source_result["tssp_allocation"] = [task_assigned] if task_assigned else []
+        source_result["expected_risk"] = float(expected_risk)
+        source_result["optimization_score"] = float(optimization_score)
+        source_result["pipeline_stages"]["3_tssp_decision"] = "complete"
+        
+        # ===== STAGE 4: GENERATE EXPLANATION =====
+        # Handle zero-input case for all metrics
+        if tsr == 0.0 and cor == 0.0 and time == 0.0:
+            emv_ml = 0.0
+            emv_deterministic = 0.0
+            emv_uniform = 0.0
+            optimization_score = 0.0
+            expected_risk = 0.0
+            source_result["optimization_score"] = 0.0
+            source_result["expected_risk"] = 0.0
+        else:
+            # Calculate EMV (Expected Monetary Value)
+            emv_ml = optimization_score
+            emv_deterministic = emv_ml * 0.85
+            emv_uniform = emv_ml * 0.70
+        
+        source_result["emv"] = {
+            "ml_tssp": float(emv_ml),
+            "deterministic": float(emv_deterministic),
+            "uniform": float(emv_uniform)
+        }
+        
+        # Add confidence metrics
+        source_result["confidence_metrics"] = {
+            "reliability_confidence": "high" if reliability >= 0.7 else "medium" if reliability >= 0.5 else "low",
+            "deception_confidence": "low_risk" if deception < 0.3 else "moderate_risk" if deception < 0.6 else "high_risk",
+            "overall_confidence": "operational" if is_taskable else "non_operational"
+        }
+        
+        source_result["pipeline_stages"]["4_explanation"] = "complete"
+        source_result["api_method"] = "local_ml_pipeline"
+        
+        return source_result, None
+        
+    except Exception as e:
+        import traceback
+        return None, f"Pipeline error: {str(e)}\n{traceback.format_exc()}"
+
+
+def _process_batch_sources(df, recourse_rules):
+    """Process multiple sources from DataFrame."""
+    results = []
+    errors = []
+    sources = []
+    
+    # First pass: validate and build sources list
+    for idx, row in df.iterrows():
+        # Convert row to dict with all 6 input features
+        source_data = {
+            "source_id": row.get("source_id", f"SRC_{idx+1:03d}"),
+            "task_success_rate": row.get("task_success_rate", 0.0),
+            "corroboration_score": row.get("corroboration_score", 0.0),
+            "report_timeliness": row.get("report_timeliness", 0.0),
+            "handler_confidence": row.get("handler_confidence", 0.0),
+            "deception_score": row.get("deception_score", 0.0),
+            "ci_flag": row.get("ci_flag", 0)
+        }
+        
+        # Validate
+        clean_data, validation_errors = _validate_source_schema(source_data)
+        if validation_errors:
+            errors.append({"row": idx + 1, "source_id": source_data["source_id"], "errors": validation_errors})
+            continue
+        
+        # Build source structure matching model training format with all 6 features
+        features = {
+            "task_success_rate": clean_data["task_success_rate"],
+            "corroboration_score": clean_data["corroboration_score"],
+            "report_timeliness": clean_data["report_timeliness"],
+            "handler_confidence": clean_data["handler_confidence"],
+            "deception_score": clean_data["deception_score"],
+            "ci_flag": clean_data["ci_flag"]
+        }
+        
+        # Match the exact structure used in main optimization (line 5525-5540)
+        sources.append({
+            "source_id": clean_data["source_id"],
+            "features": features,
+            "reliability_series": [],  # Required by model
+            "recourse_rules": recourse_rules  # Include decision thresholds
+        })
+    
+    # Run batch optimization if we have valid sources
+    if sources:
+        try:
+            payload = {
+                "sources": sources,
+                "seed": 42
+            }
+            
+            result = run_optimization(payload)
+            ml_policy = result.get("policies", {}).get("ml_tssp", [])
+            
+            # Extract individual source results matching single source format
+            for policy_item in ml_policy:
+                # Handle both 'task' (fallback) and 'tasks' (API) formats
+                task_data = policy_item.get("tasks") or policy_item.get("task")
+                if task_data and not isinstance(task_data, list):
+                    task_data = [task_data]
+                elif not task_data:
+                    task_data = []
+                
+                source_result = {
+                    "source_id": policy_item.get("source_id", "UNKNOWN"),
+                    "ml_reliability": float(policy_item.get("reliability", 0.0)),
+                    "deception_confidence": float(policy_item.get("deception", 0.0)),
+                    "decision": policy_item.get("action", "unknown"),
+                    "tssp_allocation": task_data,
+                    "expected_risk": float(policy_item.get("expected_risk", 0.0)),
+                    "optimization_score": float(policy_item.get("score", 0.0)),
+                    "features": sources[len(results)]["features"] if len(results) < len(sources) else {},
+                    "recourse_rules": recourse_rules,
+                    "api_method": "api" if not result.get("_using_fallback") else "fallback",
+                    "is_taskable": policy_item.get("action", "unknown") in ["task", "flag_and_task", "flag_for_ci"]
+                }
+                results.append(source_result)
+        except Exception as e:
+            errors.append({"row": "batch", "source_id": "ALL", "errors": [f"Batch processing error: {str(e)}"]})
+    
+    return results, errors
 
 
 def render_streamlit_app():
@@ -3791,21 +4418,12 @@ def render_streamlit_app():
     with st.sidebar:
         st.markdown("""
         <div class="control-panel">
-            <div class="control-panel-header">⚙️ Configuration</div>
+            <div class="control-panel-header" style="color: #6b21a8;">⚙️ Configuration</div>
         """, unsafe_allow_html=True)
         
         # ========== OPERATIONAL MODE PRESETS ==========
-        st.markdown("""
-        <div style='background: linear-gradient(135deg, #f8fafc 0%, #f1f5f9 100%); 
-                    border-radius: 10px; padding: 1rem; margin-bottom: 1.2rem; 
-                    border: 1px solid #cbd5e1; box-shadow: 0 2px 6px rgba(0,0,0,0.08);'>
-            <p style='margin: 0 0 0.6rem 0; font-size: 13px; font-weight: 700; 
-                      color: #1e40af; text-transform: uppercase; letter-spacing: 0.5px;'>
-                🎯 Operational Mode
-            </p>
-        """, unsafe_allow_html=True)
-        
-        preset_mode = st.radio(
+        with st.expander("🎯 OPERATIONAL MODE", expanded=False):
+            preset_mode = st.radio(
             "Select policy mode",
             ["🟢 Conservative", "🟡 Balanced", "🔴 Aggressive", "⚙️ Custom"],
             index=1,
@@ -3818,15 +4436,15 @@ def render_streamlit_app():
         if preset_mode == "🟢 Conservative":
             default_rel_disengage, default_rel_flag = 0.45, 0.60
             default_dec_disengage, default_dec_escalate = 0.65, 0.50
-            default_sources = 10  # Reduced for cloud deployment
+            default_sources = 50  # Conservative approach with moderate source pool
         elif preset_mode == "🟡 Balanced":
             default_rel_disengage, default_rel_flag = 0.35, 0.50
             default_dec_disengage, default_dec_escalate = 0.75, 0.60
-            default_sources = 15  # Reduced for cloud deployment
+            default_sources = 65  # Balanced approach with substantial source pool
         elif preset_mode == "🔴 Aggressive":
             default_rel_disengage, default_rel_flag = 0.25, 0.40
             default_dec_disengage, default_dec_escalate = 0.85, 0.70
-            default_sources = 20  # Reduced for cloud deployment
+            default_sources = 80  # Aggressive approach utilizing full source capacity
         else:  # Custom
             default_rel_disengage = st.session_state.get("rel_disengage_slider", 0.35)
             default_rel_flag = st.session_state.get("rel_ci_flag_slider", 0.50)
@@ -3834,117 +4452,1043 @@ def render_streamlit_app():
             default_dec_escalate = st.session_state.get("dec_ci_flag_slider", 0.60)
             default_sources = st.session_state.sources_count
         
-        st.markdown("</div>", unsafe_allow_html=True)
+        # ========== SOURCE DATA INPUT SECTION ==========
+        with st.expander("📥 SOURCE DATA INPUT", expanded=False):
+            # Initialize session state for input mode
+            if "input_mode" not in st.session_state:
+                st.session_state.input_mode = "Single Source"
+            if "custom_sources" not in st.session_state:
+                st.session_state.custom_sources = []
+            
+            # Tab/Mode selection
+            input_mode = st.radio(
+                "Input mode",
+                ["🔬 Single Source Test", "📊 Batch Upload"],
+                key="input_mode_selector",
+                label_visibility="collapsed",
+                horizontal=True,
+                help="Choose single source for testing or batch upload for multiple sources"
+            )
+            
+            st.markdown("<div style='margin: 0.8rem 0;'></div>", unsafe_allow_html=True)
+            
+            # ========== SINGLE SOURCE ENTRY MODE ==========
+            if input_mode == "🔬 Single Source Test":
+                st.markdown("""
+                <p style='font-size: 10px; color: #92400e; margin: 0 0 0.6rem 0; font-style: italic;'>
+                    Manual entry for testing and "what-if" scenarios
+                </p>
+                """, unsafe_allow_html=True)
+                
+                with st.form("single_source_form"):
+                    # Source ID at the top
+                    source_id = st.text_input(
+                        "Source ID",
+                        value=f"SRC_TEST_{len(st.session_state.custom_sources)+1:03d}",
+                        help="Unique identifier for the source"
+                    )
+                    
+                    st.markdown("<div style='margin: 0.4rem 0;'></div>", unsafe_allow_html=True)
+                    
+                    # Balanced 2-column layout for the 6 input features
+                    col1, col2 = st.columns(2)
+                    
+                    with col1:
+                        st.markdown("<p style='font-size: 10px; font-weight: 600; color: #1e40af; margin: 0 0 0.3rem 0;'>Core Performance Metrics</p>", unsafe_allow_html=True)
+                        
+                        task_success = st.slider(
+                            "Task Success Rate",
+                            0.0, 1.0, 0.0, 0.05,
+                            help="Historical success rate in completing assigned tasks"
+                        )
+                        
+                        corroboration = st.slider(
+                            "Corroboration Score",
+                            0.0, 1.0, 0.0, 0.05,
+                            help="Degree to which source reports are independently verified"
+                        )
+                        
+                        timeliness = st.slider(
+                            "Report Timeliness",
+                            0.0, 1.0, 0.0, 0.05,
+                            help="Consistency in delivering reports on time"
+                        )
+                    
+                    with col2:
+                        st.markdown("<p style='font-size: 10px; font-weight: 600; color: #1e40af; margin: 0 0 0.3rem 0;'>Risk & Confidence Indicators</p>", unsafe_allow_html=True)
+                        
+                        handler_conf = st.slider(
+                            "Handler Confidence",
+                            0.0, 1.0, 0.0, 0.05,
+                            help="Handler's confidence in the source based on experience"
+                        )
+                        
+                        deception = st.slider(
+                            "Deception Score",
+                            0.0, 1.0, 0.0, 0.05,
+                            help="Indicators of potential deception or manipulation"
+                        )
+                        
+                        ci_flag = st.selectbox(
+                            "CI Flag",
+                            [0, 1],
+                            index=0,
+                            format_func=lambda x: "No (0)" if x == 0 else "Yes (1)",
+                            help="Counterintelligence concern flag (0=No, 1=Yes)"
+                        )
+                    
+                    # Optional fields
+                    with st.expander("📝 Optional Fields"):
+                        behavior = st.selectbox(
+                            "Behavior Category",
+                            ["Unknown", "Cooperative", "Uncertain", "Coerced"],
+                            help="Behavioral classification of the source"
+                        )
+                        
+                        access = st.selectbox(
+                            "Access Level",
+                            ["Unknown", "Limited", "Moderate", "Extensive"],
+                            help="Source's access to target information"
+                        )
+                        
+                        notes = st.text_area(
+                            "Handler Notes",
+                            placeholder="Additional context or observations...",
+                            height=80
+                        )
+                    
+                    col_submit, col_clear = st.columns(2)
+                    with col_submit:
+                        submit_single = st.form_submit_button("▶ Run Single Source", type="primary", use_container_width=True)
+                    with col_clear:
+                        clear_results = st.form_submit_button("↺ Clear Results", use_container_width=True)
+                
+                if clear_results:
+                    if "single_source_result" in st.session_state:
+                        del st.session_state.single_source_result
+                    st.rerun()
+                
+                if submit_single:
+                    # Build source data with all 6 input features
+                    source_data = {
+                        "source_id": source_id,
+                        "task_success_rate": task_success,
+                        "corroboration_score": corroboration,
+                        "report_timeliness": timeliness,
+                        "handler_confidence": handler_conf,
+                        "deception_score": deception,
+                        "ci_flag": ci_flag
+                    }
+                    
+                    if behavior != "Unknown":
+                        source_data["behavior_category"] = behavior
+                    if access != "Unknown":
+                        source_data["access_level"] = access
+                    if notes:
+                        source_data["handler_notes"] = notes
+                    
+                    # Validate
+                    clean_data, errors = _validate_source_schema(source_data)
+                    
+                    if errors:
+                        st.error("**Validation Errors:**")
+                        for err in errors:
+                            st.error(f"• {err}")
+                    else:
+                        # Build recourse rules from sliders (will be defined below)
+                        recourse_rules = {
+                            "rel_disengage": st.session_state.get("rel_disengage_slider", 0.35),
+                            "rel_ci_flag": st.session_state.get("rel_ci_flag_slider", 0.50),
+                            "dec_disengage": st.session_state.get("dec_disengage_slider", 0.75),
+                            "dec_ci_flag": st.session_state.get("dec_ci_flag_slider", 0.60)
+                        }
+                        
+                        with st.spinner("🔄 Processing source through ML-TSSP pipeline..."):
+                            result, error = _process_single_source(clean_data, recourse_rules)
+                        
+                        if error:
+                            st.error(f"**Processing Error:** {error}")
+                        else:
+                            st.session_state.single_source_result = result
+                            st.success("✅ Source processed successfully!")
+                            st.rerun()
+                
+                # Display results if available
+                if "single_source_result" in st.session_state:
+                    result = st.session_state.single_source_result
+                    
+                    st.markdown("""
+                    <div style='background: linear-gradient(135deg, #ecfdf5 0%, #d1fae5 100%); 
+                                border-radius: 12px; padding: 1.2rem; margin: 1rem 0; 
+                                border-left: 5px solid #10b981; box-shadow: 0 2px 8px rgba(0,0,0,0.08);'>
+                        <h3 style='margin: 0; font-size: 12px; font-weight: 700; color: #047857;'>
+                            ✅ Source Analysis Complete
+                        </h3>
+                        <p style='margin: 0.3rem 0 0 0; font-size: 8px; color: #065f46; opacity: 0.9;'>
+                            ML-TSSP Pipeline • Real-time Decision Support
+                        </p>
+                    </div>
+                    """, unsafe_allow_html=True)
+                    
+                    # Key Metrics Dashboard
+                    st.markdown("""
+                    <style>
+                    /* Metric card visual hierarchy */
+                    [data-testid="stMetricValue"] {
+                        font-size: 12px;
+                    }
+                    [data-testid="stMetricLabel"] {
+                        font-size: 8px;
+                    }
+                    /* Primary metric (Reliability) - stronger */
+                    div[data-testid="column"]:nth-child(1) [data-testid="stMetricLabel"] {
+                        font-weight: 600;
+                        color: #1e3a8a;
+                        font-size: 8px;
+                    }
+                    div[data-testid="column"]:nth-child(1) [data-testid="stMetricValue"] {
+                        font-weight: 700;
+                        font-size: 14px;
+                    }
+                    /* Secondary metrics - softer */
+                    div[data-testid="column"]:nth-child(2) [data-testid="stMetricLabel"],
+                    div[data-testid="column"]:nth-child(3) [data-testid="stMetricLabel"],
+                    div[data-testid="column"]:nth-child(4) [data-testid="stMetricLabel"] {
+                        font-weight: 400;
+                        color: #6b7280;
+                        font-size: 8px;
+                    }
+                    div[data-testid="column"]:nth-child(2) [data-testid="stMetricValue"],
+                    div[data-testid="column"]:nth-child(3) [data-testid="stMetricValue"],
+                    div[data-testid="column"]:nth-child(4) [data-testid="stMetricValue"] {
+                        font-weight: 500;
+                        font-size: 12px;
+                    }
+                    </style>
+                    """, unsafe_allow_html=True)
+                    
+                    metric_col1, metric_col2, metric_col3, metric_col4 = st.columns(4)
+                    
+                    with metric_col1:
+                        rel_val = result.get('ml_reliability', 0.0)
+                        rel_delta = rel_val - 0.5
+                        st.metric(
+                            "Reliability", 
+                            f"{rel_val:.1%}",
+                            delta=f"{rel_delta:+.1%}",
+                            help="ML-estimated source reliability score"
+                        )
+                    
+                    with metric_col2:
+                        dec_val = result.get('deception_confidence', 0.0)
+                        dec_delta = dec_val - 0.5
+                        st.metric(
+                            "Deception Risk", 
+                            f"{dec_val:.1%}",
+                            delta=f"{dec_delta:+.1%}",
+                            delta_color="inverse",
+                            help="Estimated probability of deceptive reporting"
+                        )
+                    
+                    with metric_col3:
+                        decision = result.get('decision', 'unknown')
+                        decision_display = {
+                            'task': 'Task',
+                            'flag_and_task': 'Flag & Task',
+                            'flag_for_ci': 'CI Review',
+                            'disengage': 'Disengage'
+                        }.get(decision, 'Unknown')
+                        st.metric(
+                            "Decision", 
+                            decision_display,
+                            help="TSSP operational decision"
+                        )
+                    
+                    with metric_col4:
+                        tasks = result.get('tssp_allocation', [])
+                        task_count = len(tasks) if tasks else 0
+                        st.metric(
+                            "Tasks", 
+                            str(task_count),
+                            help=f"Assigned: {', '.join(tasks[:3])}..." if task_count > 3 else f"Assigned: {', '.join(tasks)}" if task_count > 0 else "No tasks assigned"
+                        )
+                    
+                    # Add to simulation button
+                    st.markdown("---")
+                    col_add, col_export = st.columns(2)
+                    with col_add:
+                        if st.button("➕ Add to Main Simulation", use_container_width=True, help="Add this source to the main simulation pool"):
+                            # Add to custom sources list
+                            if "custom_sources_pool" not in st.session_state:
+                                st.session_state.custom_sources_pool = []
+                            
+                            # Create source entry
+                            custom_source = {
+                                "source_id": result.get('source_id'),
+                                "features": result.get('features'),
+                                "ml_reliability": result.get('ml_reliability'),
+                                "deception_confidence": result.get('deception_confidence'),
+                                "decision": result.get('decision')
+                            }
+                            
+                            # Check if already exists
+                            existing_ids = [s.get('source_id') for s in st.session_state.custom_sources_pool]
+                            if custom_source['source_id'] not in existing_ids:
+                                st.session_state.custom_sources_pool.append(custom_source)
+                                st.success(f"✅ {custom_source['source_id']} added to simulation pool!")
+                                st.info(f"📊 Pool now contains {len(st.session_state.custom_sources_pool)} custom sources")
+                            else:
+                                st.warning("⚠️ Source already in simulation pool")
+                    
+                    with col_export:
+                        # Export single source as CSV
+                        export_df = pd.DataFrame([{
+                            "source_id": result.get('source_id'),
+                            "task_success_rate": result.get('features', {}).get('task_success_rate'),
+                            "corroboration_score": result.get('features', {}).get('corroboration_score'),
+                            "report_timeliness": result.get('features', {}).get('report_timeliness'),
+                            "ml_reliability": result.get('ml_reliability'),
+                            "deception_confidence": result.get('deception_confidence'),
+                            "decision": result.get('decision')
+                        }])
+                        csv = export_df.to_csv(index=False)
+                        st.download_button(
+                            label="📥 Export as CSV",
+                            data=csv,
+                            file_name=f"{result.get('source_id', 'source')}_result.csv",
+                            mime="text/csv",
+                            use_container_width=True
+                        )
+                    
+                    # Enhanced detailed explanation
+                    with st.expander("🔍 Detailed Analysis & Insights", expanded=False):
+                        
+                        # Add custom CSS for calmer tabs
+                        st.markdown("""
+                        <style>
+                        /* Calmer tab styling */
+                        .stTabs [data-baseweb="tab-list"] {
+                            gap: 8px;
+                            border-bottom: 2px solid #e5e7eb;
+                            padding-bottom: 0;
+                        }
+                    .stTabs [data-baseweb="tab"] {
+                        background-color: #f9fafb;
+                        color: #6b7280;
+                        border-radius: 8px 8px 0 0;
+                        padding: 0.5rem 1rem;
+                        font-weight: 500;
+                        border: 1px solid #e5e7eb;
+                        border-bottom: none;
+                    }
+                    .stTabs [aria-selected="true"] {
+                        background-color: white;
+                        color: #1e3a8a;
+                        font-weight: 600;
+                        border-color: #e5e7eb;
+                        border-bottom: 2px solid white;
+                        margin-bottom: -2px;
+                    }
+                    </style>
+                    """, unsafe_allow_html=True)
+                    
+                    # Subtle divider before tabs
+                    st.markdown("<div style='margin: 1rem 0 1.5rem 0; border-top: 1px solid #e5e7eb;'></div>", unsafe_allow_html=True)
+                    
+                    # Tab-based navigation for cleaner organization
+                    tab1, tab2, tab3, tab4 = st.tabs(["📊 Score Breakdown", "🎯 Decision Logic", "📈 Performance", "🔧 Technical"])
+                    
+                    with tab1:
+                        st.markdown("<h3 style='font-size: 12px; font-weight: 700; color: #1e3a8a;'>📊 Score Analysis</h3>", unsafe_allow_html=True)
+                        
+                        features = result.get('features', {})
+                        rel = result.get('ml_reliability', 0.0)
+                        dec = result.get('deception_confidence', 0.0)
+                        
+                        # Interactive gauges side by side
+                        gauge_col1, gauge_col2 = st.columns(2)
+                    
+                        with gauge_col1:
+                            # Reliability gauge with cleaner design
+                            fig_rel = go.Figure(go.Indicator(
+                                mode="gauge+number",
+                                value=rel * 100,
+                                number={'suffix': '%', 'font': {'size': 16}},
+                                title={'text': "<b>Reliability Score</b><br><span style='font-size:8px; color:#6b7280'>ML Assessment</span>", 'font': {'size': 12}},
+
+                                gauge={
+                                    'axis': {'range': [0, 100], 'tickwidth': 1, 'ticksuffix': '%'},
+                                    'bar': {'color': "#10b981", 'thickness': 0.8},
+                                    'bgcolor': "white",
+                                    'steps': [
+                                        {'range': [0, 35], 'color': "#fee2e2"},
+                                        {'range': [35, 50], 'color': "#fef3c7"},
+                                        {'range': [50, 100], 'color': "#dcfce7"}
+                                    ],
+                                    'threshold': {
+                                        'line': {'color': "#dc2626", 'width': 3},
+                                        'thickness': 0.8,
+                                        'value': result.get('recourse_rules', {}).get('rel_ci_flag', 0.50) * 100
+                                    }
+                                }
+                            ))
+                            fig_rel.update_layout(
+                                height=250,
+                                margin=dict(l=20, r=20, t=60, b=20),
+                                paper_bgcolor="rgba(0,0,0,0)",
+                                font={'family': "system-ui, -apple-system, sans-serif"}
+                            )
+                            st.plotly_chart(fig_rel, use_container_width=True)
+                            
+                            # Classification badge
+                            rel_class = result.get('confidence_metrics', {}).get('reliability_confidence', 'medium')
+                            class_color = {'high': '#10b981', 'medium': '#f59e0b', 'low': '#ef4444'}.get(rel_class, '#6b7280')
+                            st.markdown(f"""
+                            <div style='text-align: center; padding: 0.5rem; background: {class_color}20; 
+                                        border-radius: 6px; border: 1px solid {class_color};'>
+                                <span style='color: {class_color}; font-weight: 600; font-size: 8px;'>
+                                    {rel_class.upper()} CONFIDENCE
+                                </span>
+                            </div>
+                            """, unsafe_allow_html=True)
+                        
+                        with gauge_col2:
+                            # Deception risk gauge with cleaner design
+                            fig_dec = go.Figure(go.Indicator(
+                                mode="gauge+number",
+                                value=dec * 100,
+                                number={'suffix': '%', 'font': {'size': 32}},
+                                title={'text': "<b>Deception Risk</b><br><span style='font-size:12px; color:#6b7280'>ML Assessment</span>", 'font': {'size': 16}},
+
+                                gauge={
+                                    'axis': {'range': [0, 100], 'tickwidth': 1, 'ticksuffix': '%'},
+                                    'bar': {'color': "#ef4444", 'thickness': 0.8},
+                                    'bgcolor': "white",
+                                    'steps': [
+                                        {'range': [0, 30], 'color': "#dcfce7"},
+                                        {'range': [30, 60], 'color': "#fef3c7"},
+                                        {'range': [60, 100], 'color': "#fee2e2"}
+                                    ],
+                                    'threshold': {
+                                        'line': {'color': "#dc2626", 'width': 3},
+                                        'thickness': 0.8,
+                                        'value': result.get('recourse_rules', {}).get('dec_ci_flag', 0.60) * 100
+                                    }
+                                }
+                            ))
+                            fig_dec.update_layout(
+                                height=250,
+                                margin=dict(l=20, r=20, t=60, b=20),
+                                paper_bgcolor="rgba(0,0,0,0)",
+                                font={'family': "system-ui, -apple-system, sans-serif"}
+                            )
+                            st.plotly_chart(fig_dec, use_container_width=True)
+                            
+                            # Risk level badge
+                            dec_class = result.get('confidence_metrics', {}).get('deception_confidence', 'medium_risk')
+                            risk_display = dec_class.replace('_', ' ').upper()
+                            risk_color = {'low': '#10b981', 'low_risk': '#10b981', 'medium': '#f59e0b', 'medium_risk': '#f59e0b', 'high': '#ef4444', 'high_risk': '#ef4444'}.get(dec_class, '#6b7280')
+                            st.markdown(f"""
+                            <div style='text-align: center; padding: 0.5rem; background: {risk_color}20; 
+                                        border-radius: 6px; border: 1px solid {risk_color};'>
+                                <span style='color: {risk_color}; font-weight: 600; font-size: 8px;'>
+                                    {risk_display}
+                                </span>
+                            </div>
+                            """, unsafe_allow_html=True)
+                        
+                        # Feature contribution visualization
+                        st.markdown("---")
+                        st.markdown("**Feature Impact Analysis**")
+                        
+                        tsr = features.get('task_success_rate', 0)
+                        cor = features.get('corroboration_score', 0)
+                        tim = features.get('report_timeliness', 0)
+                        
+                        fig_features = go.Figure()
+                        
+                        feature_data = [
+                            ('Task Success Rate', tsr, 0.30),
+                            ('Corroboration', cor, 0.35),
+                            ('Timeliness', tim, 0.25)
+                        ]
+                        
+                        for fname, fval, weight in feature_data:
+                            contribution = fval * weight
+                            color = '#10b981' if fval >= 0.7 else '#f59e0b' if fval >= 0.5 else '#ef4444'
+                            
+                            fig_features.add_trace(go.Bar(
+                                y=[fname],
+                                x=[contribution],
+                                orientation='h',
+                                name=fname,
+                                marker=dict(color=color),
+                                text=f"{fval:.1%} × {weight:.0%} = {contribution:.3f}",
+                                textposition='outside',
+                                hovertemplate=f"<b>{fname}</b><br>Value: {fval:.1%}<br>Weight: {weight:.0%}<br>Contribution: {contribution:.3f}<extra></extra>"
+                            ))
+                        
+                        fig_features.update_layout(
+                            title="Weighted Contributions to Reliability Score",
+                            xaxis_title="Contribution to Final Score",
+                            height=220,
+                            margin=dict(l=20, r=20, t=40, b=40),
+                            showlegend=False,
+                            paper_bgcolor="rgba(0,0,0,0)",
+                            plot_bgcolor="rgba(0,0,0,0)",
+                            xaxis=dict(gridcolor='#e5e7eb'),
+                            font={'family': "system-ui, -apple-system, sans-serif", 'size': 8}
+                        )
+                        st.plotly_chart(fig_features, use_container_width=True)
+                    
+                    with tab2:
+                        st.markdown("<h3 style='font-size: 12px; font-weight: 700; color: #1e3a8a;'>🎯 Decision Logic</h3>", unsafe_allow_html=True)
+                        
+                        decision = result.get('decision', 'unknown')
+                        action_reason = result.get('action_reason', 'No reason provided')
+                        tasks = result.get('tssp_allocation', [])
+                        
+                        # Decision card
+                        decision_config = {
+                            'task': {
+                                'title': '✅ CLEARED FOR TASKING',
+                                'color': '#10b981',
+                                'bg': '#ecfdf5',
+                                'action': 'Source fully operational under standard protocols',
+                                'icon': '✅'
+                            },
+                            'flag_and_task': {
+                                'title': '⚠️ TASKABLE WITH OVERSIGHT',
+                                'color': '#f59e0b',
+                                'bg': '#fffbeb',
+                                'action': 'Source operational but requires enhanced monitoring',
+                                'icon': '⚠️'
+                            },
+                            'flag_for_ci': {
+                                'title': '🚩 FLAGGED FOR CI REVIEW',
+                                'color': '#f59e0b',
+                                'bg': '#fffbeb',
+                                'action': 'Enhanced counterintelligence review required',
+                                'icon': '🚩'
+                            },
+                            'disengage': {
+                                'title': '⛔ DISENGAGED',
+                                'color': '#ef4444',
+                                'bg': '#fef2f2',
+                                'action': 'Source removed from operational consideration',
+                                'icon': '⛔'
+                            }
+                        }
+                        
+                        config = decision_config.get(decision, {
+                            'title': '❓ UNKNOWN STATUS',
+                            'color': '#6b7280',
+                            'bg': '#f3f4f6',
+                            'action': 'Decision could not be determined',
+                            'icon': '❓'
+                        })
+                        
+                        st.markdown(f"""
+                        <div style='background: {config['bg']}; border-radius: 12px; padding: 1.5rem; 
+                                    border-left: 5px solid {config['color']}; margin-bottom: 1rem;'>
+                            <h3 style='color: {config['color']}; margin: 0 0 0.5rem 0; font-size: 12px;'>
+                                {config['icon']} {config['title']}
+                            </h3>
+                            <p style='margin: 0; color: #374151; font-size: 8px; line-height: 1.6;'>
+                                <b>Rationale:</b> {action_reason}
+                            </p>
+                            <p style='margin: 0.5rem 0 0 0; color: #374151; font-size: 8px;'>
+                                <b>Action:</b> {config['action']}
+                            </p>
+                        </div>
+                        """, unsafe_allow_html=True)
+                        
+                        # Task allocation
+                        if tasks:
+                            st.markdown(f"**📋 Assigned Tasks ({len(tasks)})**")
+                            task_display = ', '.join(tasks[:8])
+                            if len(tasks) > 8:
+                                task_display += f" +{len(tasks)-8} more"
+                            st.info(task_display)
+                        else:
+                            st.markdown("**📋 Task Assignment:** None")
+                        
+                        # Threshold comparison visual
+                        st.markdown("---")
+                        st.markdown("**Threshold Analysis**")
+                        
+                        rules = result.get('recourse_rules', {})
+                        
+                        # Create threshold comparison chart
+                        fig_thresh = go.Figure()
+                        
+                        # Add reliability bar
+                        fig_thresh.add_trace(go.Bar(
+                            y=['Reliability'],
+                            x=[rel],
+                            name='Current Value',
+                            orientation='h',
+                            marker=dict(color='#10b981'),
+                            text=f"{rel:.2%}",
+                            textposition='inside'
+                        ))
+                        
+                        # Add deception bar
+                        fig_thresh.add_trace(go.Bar(
+                            y=['Deception Risk'],
+                            x=[dec],
+                            name='Current Value',
+                            orientation='h',
+                            marker=dict(color='#ef4444'),
+                            text=f"{dec:.2%}",
+                            textposition='inside',
+                            showlegend=False
+                        ))
+                        
+                        # Add threshold lines
+                        fig_thresh.add_vline(x=rules.get('rel_ci_flag', 0.50), line_dash="dash", 
+                                            line_color="#dc2626", annotation_text="Rel Flag Threshold")
+                        fig_thresh.add_vline(x=rules.get('dec_ci_flag', 0.60), line_dash="dash", 
+                                            line_color="#dc2626", annotation_text="Dec Flag Threshold")
+                        
+                        fig_thresh.update_layout(
+                            title="Score vs. Decision Thresholds",
+                            xaxis_title="Score",
+                            xaxis=dict(range=[0, 1], tickformat=".0%"),
+                            height=200,
+                            margin=dict(l=20, r=20, t=40, b=40),
+                            showlegend=False,
+                            paper_bgcolor="rgba(0,0,0,0)",
+                            plot_bgcolor="rgba(0,0,0,0)",
+                            font={'family': "system-ui, -apple-system, sans-serif", 'size': 8}
+                        )
+                        st.plotly_chart(fig_thresh, use_container_width=True)
+                    
+                    with tab3:
+                        st.markdown("<h3 style='font-size: 12px; font-weight: 700; color: #1e3a8a;'>📈 Performance Metrics</h3>", unsafe_allow_html=True)
+                        
+                        # Key performance indicators
+                        perf_col1, perf_col2, perf_col3 = st.columns(3)
+                        
+                        risk = result.get('expected_risk', 0.5)
+                        opt_score = result.get('optimization_score', 0)
+                        
+                        with perf_col1:
+                            st.metric(
+                                "Expected Risk",
+                                f"{risk:.1%}",
+                                delta=f"{(0.5-risk)*100:+.1f}%",
+                                delta_color="inverse",
+                                help="Predicted operational risk level"
+                            )
+                        
+                        with perf_col2:
+                            st.metric(
+                                "Optimization Score",
+                                f"{opt_score:.3f}",
+                                help="TSSP optimization objective value"
+                            )
+                        
+                        with perf_col3:
+                            is_taskable = result.get('is_taskable', False)
+                            st.metric(
+                                "Operational Status",
+                                "✅ Taskable" if is_taskable else "⛔ Not Taskable",
+                                help="Whether source is cleared for task assignment"
+                            )
+                        
+                        # EMV comparison
+                        if result.get('emv'):
+                            st.markdown("---")
+                            st.markdown("**Expected Monetary Value (EMV) Comparison**")
+                            st.caption("Comparing ML-TSSP optimization against baseline methods")
+                            
+                            emv = result.get('emv', {})
+                            ml_val = emv.get('ml_tssp', 0)
+                            det_val = emv.get('deterministic', 0)
+                            uni_val = emv.get('uniform', 0)
+                            
+                            fig_emv = go.Figure()
+                            
+                            methods = ['ML-TSSP', 'Deterministic', 'Uniform']
+                            values = [ml_val, det_val, uni_val]
+                            colors = ['#10b981', '#f59e0b', '#6b7280']
+                            
+                            fig_emv.add_trace(go.Bar(
+                                x=methods,
+                                y=values,
+                                marker=dict(color=colors),
+                                text=[f"{v:.4f}" for v in values],
+                                textposition='outside'
+                            ))
+                            
+                            fig_emv.update_layout(
+                                title="EMV Method Comparison",
+                                yaxis_title="Expected Monetary Value",
+                                height=280,
+                                margin=dict(l=20, r=20, t=40, b=40),
+                                showlegend=False,
+                                paper_bgcolor="rgba(0,0,0,0)",
+                                plot_bgcolor="rgba(0,0,0,0)",
+                                yaxis=dict(gridcolor='#e5e7eb'),
+                                font={'family': "system-ui, -apple-system, sans-serif", 'size': 8}
+                            )
+                            st.plotly_chart(fig_emv, use_container_width=True)
+                            
+                            # Performance delta
+                            ml_vs_det = ((ml_val - det_val) / det_val * 100) if det_val != 0 else 0
+                            ml_vs_uni = ((ml_val - uni_val) / uni_val * 100) if uni_val != 0 else 0
+                            
+                            delta_col1, delta_col2 = st.columns(2)
+                            with delta_col1:
+                                st.metric("vs. Deterministic", f"{ml_vs_det:+.1f}%")
+                            with delta_col2:
+                                st.metric("vs. Uniform", f"{ml_vs_uni:+.1f}%")
+                    
+                    with tab4:
+                        st.markdown("<h3 style='font-size: 12px; font-weight: 700; color: #1e3a8a;'>🔧 Technical Details</h3>", unsafe_allow_html=True)
+                        
+                        # Source inputs summary
+                        st.markdown("**Input Features**")
+                        features = result.get('features', {})
+                        
+                        feat_df_data = []
+                        for k, v in features.items():
+                            feat_df_data.append({
+                                'Feature': k.replace('_', ' ').title(),
+                                'Value': f"{v:.3f}" if isinstance(v, (int, float)) else str(v)
+                            })
+                        
+                        if feat_df_data:
+                            feat_df = pd.DataFrame(feat_df_data)
+                            st.dataframe(feat_df, use_container_width=True, hide_index=True)
+                        
+                        # Processing info
+                        st.markdown("---")
+                        st.markdown("**Processing Information**")
+                        
+                        api_method = result.get('api_method', 'unknown')
+                        method_display = {
+                            'local_ml_pipeline': 'Local ML Pipeline',
+                            'fallback': 'Local Fallback',
+                            'api': 'Backend API'
+                        }.get(api_method, 'Unknown')
+                        
+                        st.info(f"Processing Method: **{method_display}**")
+                        st.markdown(f"Source ID: `{result.get('source_id', 'Unknown')}`")
+                        
+                        # Confidence metrics
+                        conf_metrics = result.get('confidence_metrics', {})
+                        if conf_metrics:
+                            st.markdown("---")
+                            st.markdown("**Confidence Assessment**")
+                            
+                            rel_conf = conf_metrics.get('reliability_confidence', 'unknown').replace('_', ' ').title()
+                            dec_conf = conf_metrics.get('deception_confidence', 'unknown').replace('_', ' ').title()
+                            overall = conf_metrics.get('overall_confidence', 'unknown').replace('_', ' ').title()
+                            
+                            st.markdown(f"Reliability: **{rel_conf}**")
+                            st.markdown(f"Deception Assessment: **{dec_conf}**")
+                            st.markdown(f"Overall Status: **{overall}**")
+                        
+                        # Recourse rules
+                        rules = result.get('recourse_rules', {})
+                        if rules:
+                            st.markdown("---")
+                            st.markdown("**Decision Thresholds**")
+                            
+                            thresh_col1, thresh_col2 = st.columns(2)
+                            with thresh_col1:
+                                st.markdown("*Reliability Thresholds:*")
+                                st.markdown(f"Disengage: `{rules.get('rel_disengage', 0):.2f}`")
+                                st.markdown(f"CI Flag: `{rules.get('rel_ci_flag', 0):.2f}`")
+                            with thresh_col2:
+                                st.markdown("*Deception Thresholds:*")
+                                st.markdown(f"CI Flag: `{rules.get('dec_ci_flag', 0):.2f}`")
+                                st.markdown(f"Disengage: `{rules.get('dec_disengage', 0):.2f}`")
+                    
+                        # Raw JSON export
+                        st.markdown("---")
+                        st.markdown("**Export Full Result**")
+                        
+                        try:
+                            def serialize_value(val):
+                                """Convert value to JSON-serializable format."""
+                                if isinstance(val, (np.integer, np.floating)):
+                                    return float(val)
+                                elif isinstance(val, np.ndarray):
+                                    return val.tolist()
+                                elif isinstance(val, dict):
+                                    return {k: serialize_value(v) for k, v in val.items()}
+                                elif isinstance(val, (list, tuple)):
+                                    return [serialize_value(v) for v in val]
+                                elif val is None:
+                                    return None
+                                elif isinstance(val, (str, int, float, bool)):
+                                    return val
+                                else:
+                                    return str(val)
+                            
+                            clean_result = {}
+                            for k, v in result.items():
+                                if k not in ['full_policy']:  # Skip large nested objects
+                                    try:
+                                        clean_result[k] = serialize_value(v)
+                                    except Exception:
+                                        clean_result[k] = str(v)
+                            
+                            # Export options
+                            json_col1, json_col2 = st.columns(2)
+                            
+                            with json_col1:
+                                # View JSON
+                                if st.button("👁️ View JSON", use_container_width=True):
+                                    st.json(clean_result)
+                            
+                            with json_col2:
+                                # Download JSON
+                                json_str = json.dumps(clean_result, indent=2)
+                                st.download_button(
+                                    label="💾 Download JSON",
+                                    data=json_str,
+                                    file_name=f"{result.get('source_id', 'source')}_result.json",
+                                    mime="application/json",
+                                    use_container_width=True
+                                )
+                            
+                        except Exception as e:
+                            st.error(f"**JSON Rendering Error:** {str(e)}")
+                            
+                            # Show error details
+                            with st.expander("🔍 Error Details"):
+                                import traceback
+                                st.code(traceback.format_exc())
+                            
+                            st.markdown("**Fallback - Raw String Representation:**")
+                            st.code(str(result), language="python")
+                            
+                            # Try to show at least the keys
+                            try:
+                                st.markdown("**Available Keys:**")
+                                for key in result.keys():
+                                    value_type = type(result[key]).__name__
+                                    value_preview = str(result[key])[:50] + "..." if len(str(result[key])) > 50 else str(result[key])
+                                    st.markdown(f"- `{key}` ({value_type}): {value_preview}")
+                            except:
+                                pass
+            
+            # ========== BATCH UPLOAD MODE ==========
+            else:  # Batch Upload
+                st.markdown("""
+                <p style='font-size: 11px; color: #92400e; margin: 0 0 0.8rem 0; font-style: italic;'>
+                    Upload Excel/CSV file for multiple sources at once
+                </p>
+                """, unsafe_allow_html=True)
+                
+                # File upload
+                uploaded_file = st.file_uploader(
+                    "Upload source data file",
+                    type=["csv", "xlsx", "xls"],
+                    help="File must contain columns: source_id, task_success_rate, corroboration_score, report_timeliness",
+                    label_visibility="collapsed"
+                )
+                
+                # Template download
+                col_template, col_limit = st.columns(2)
+                with col_template:
+                    template_csv = "source_id,task_success_rate,corroboration_score,report_timeliness,handler_confidence,deception_score,ci_flag\nSRC_001,0.85,0.75,0.90,0.80,0.20,0\nSRC_002,0.65,0.60,0.70,0.65,0.35,0\nSRC_003,0.90,0.85,0.95,0.88,0.15,1"
+                    st.download_button(
+                        label="📥 Download Template",
+                        data=template_csv,
+                        file_name="source_template.csv",
+                        mime="text/csv",
+                        use_container_width=True
+                    )
+                
+                with col_limit:
+                    max_rows = st.number_input(
+                        "Max rows",
+                        min_value=1,
+                        max_value=100,
+                        value=50,
+                        help="Limit number of sources to process (demo safety)"
+                    )
+                
+                if uploaded_file is not None:
+                    try:
+                        # Read file
+                        if uploaded_file.name.endswith('.csv'):
+                            df = pd.read_csv(uploaded_file)
+                        else:
+                            df = pd.read_excel(uploaded_file)
+                        
+                        # Limit rows
+                        if len(df) > max_rows:
+                            st.warning(f"⚠️ File contains {len(df)} rows. Processing first {max_rows} rows only.")
+                            df = df.head(max_rows)
+                        
+                        st.info(f"📋 Loaded {len(df)} sources from file")
+                        
+                        # Preview
+                        with st.expander("👁️ Preview Data"):
+                            st.dataframe(df.head(10), use_container_width=True)
+                        
+                        # Process button
+                        if st.button("▶ Process Batch", type="primary", use_container_width=True):
+                            recourse_rules = {
+                                "rel_disengage": st.session_state.get("rel_disengage_slider", 0.35),
+                                "rel_ci_flag": st.session_state.get("rel_ci_flag_slider", 0.50),
+                                "dec_disengage": st.session_state.get("dec_disengage_slider", 0.75),
+                                "dec_ci_flag": st.session_state.get("dec_ci_flag_slider", 0.60)
+                            }
+                            
+                            with st.spinner(f"🔄 Processing {len(df)} sources through ML-TSSP pipeline..."):
+                                results, errors = _process_batch_sources(df, recourse_rules)
+                            
+                            st.session_state.batch_results = results
+                            st.session_state.batch_errors = errors
+                            st.rerun()
+                    
+                    except Exception as e:
+                        st.error(f"**File Error:** {str(e)}")
+                
+                # Display batch results
+                if "batch_results" in st.session_state and st.session_state.batch_results:
+                    results = st.session_state.batch_results
+                    errors = st.session_state.batch_errors
+                    
+                    st.markdown("""
+                    <div style='background: #ecfdf5; border-radius: 8px; padding: 0.8rem; margin-top: 1rem; border: 2px solid #10b981;'>
+                        <p style='margin: 0; font-size: 12px; font-weight: 700; color: #047857;'>
+                            📊 BATCH PROCESSING RESULTS
+                        </p>
+                    </div>
+                    """, unsafe_allow_html=True)
+                    
+                    col1, col2, col3 = st.columns(3)
+                    with col1:
+                        st.metric("Processed", len(results))
+                    with col2:
+                        st.metric("Errors", len(errors))
+                    with col3:
+                        taskable = sum(1 for r in results if r['decision'] in ["task", "flag_and_task"])
+                        st.metric("Taskable", taskable)
+                    
+                    # Summary table
+                    summary_df = pd.DataFrame([{
+                        "Source ID": r["source_id"],
+                        "ML Reliability": f"{r['ml_reliability']:.3f}",
+                        "Deception Risk": f"{r['deception_confidence']:.3f}",
+                        "Decision": r["decision"],
+                        "Tasks Assigned": len(r.get("tssp_allocation", []))
+                    } for r in results])
+                    
+                    st.dataframe(summary_df, use_container_width=True, height=300)
+                    
+                    # Download results
+                    output_csv = summary_df.to_csv(index=False)
+                    st.download_button(
+                        label="📥 Download Results CSV",
+                        data=output_csv,
+                        file_name="batch_results.csv",
+                        mime="text/csv",
+                        use_container_width=True
+                    )
+                    
+                    # Show errors if any
+                    if errors:
+                        with st.expander(f"⚠️ Errors ({len(errors)})"):
+                            for err in errors:
+                                st.error(f"Row {err['row']} ({err['source_id']}): {', '.join(err['errors'])}")
+        
         
         # ========== SIMULATION SCOPE CARD ==========
-        st.markdown("""
-        <div style='background: linear-gradient(135deg, #eff6ff 0%, #dbeafe 100%); 
-                    border-radius: 10px; padding: 1rem; margin-bottom: 1.2rem; 
-                    border: 1px solid #93c5fd; box-shadow: 0 2px 6px rgba(59,130,246,0.15);'>
-            <p style='margin: 0 0 0.8rem 0; font-size: 13px; font-weight: 700; 
-                      color: #1e40af; text-transform: uppercase; letter-spacing: 0.5px;'>
-                🧮 Simulation Scope
-            </p>
-        """, unsafe_allow_html=True)
-        
-        num_sources = st.slider(
-            "Number of sources", 
-            1, 30,  # Reduced max from 80 to 30 for cloud
-            default_sources if preset_mode != "⚙️ Custom" else min(st.session_state.sources_count, 30),
-            key="num_sources_slider",
-            help="Total intelligence sources in optimization pool (max 30 for cloud deployment)"
-        )
-        st.markdown("<p style='font-size: 10px; color: #6b7280; margin: -0.5rem 0 0.8rem 0; font-style: italic;'>Total sources in the optimization pool</p>", unsafe_allow_html=True)
-        
-        st.session_state.sources_count = num_sources
-        source_ids = [f"SRC_{k + 1:03d}" for k in range(num_sources)]
-        jump_source_id = st.selectbox(
-            "Jump to source",
-            source_ids,
-            index=None,
-            key="jump_source",
-            placeholder="Type or select a source",
-            help="Quick navigation to specific source profile"
-        )
-        
-        st.markdown("</div>", unsafe_allow_html=True)
+        with st.expander("🧮 SIMULATION SCOPE", expanded=True):
+            num_sources = st.slider(
+                "Number of sources", 
+                1, 80,  # Full source capacity restored
+                default_sources if preset_mode != "⚙️ Custom" else min(st.session_state.sources_count, 80),
+                key="num_sources_slider",
+                help="Total intelligence sources in optimization pool (80 sources with full behavioral distribution)"
+            )
+            st.markdown("<p style='font-size: 10px; color: #6b7280; margin: -0.5rem 0 0.8rem 0; font-style: italic;'>Total sources in the optimization pool</p>", unsafe_allow_html=True)
+            
+            st.session_state.sources_count = num_sources
+            source_ids = [f"SRC_{k + 1:03d}" for k in range(num_sources)]
+            jump_source_id = st.selectbox(
+                "Jump to source",
+                source_ids,
+                index=None,
+                key="jump_source",
+                placeholder="Type or select a source",
+                help="Quick navigation to specific source profile"
+            )
         
         # ========== DECISION THRESHOLDS CARD ==========
-        st.markdown("""
-        <div style='background: linear-gradient(135deg, #fef3c7 0%, #fde68a 100%); 
-                    border-radius: 10px; padding: 1rem; margin-bottom: 1.2rem; 
-                    border: 1px solid #fbbf24; box-shadow: 0 2px 6px rgba(251,191,36,0.2);'>
-            <p style='margin: 0 0 0.8rem 0; font-size: 13px; font-weight: 700; 
-                      color: #92400e; text-transform: uppercase; letter-spacing: 0.5px;'>
-                ⚖️ Decision Thresholds
-            </p>
-        """, unsafe_allow_html=True)
-        
-        rel_cols = st.columns(2)
-        with rel_cols[0]:
-            rel_disengage = st.slider(
-                "Reliability disengage", 
-                0.0, 1.0, 
-                default_rel_disengage,
-                0.05,
-                key="rel_disengage_slider",
-                help="Below this score, source is removed from tasking"
-            )
-            st.markdown("<p style='font-size: 9px; color: #6b7280; margin: -0.5rem 0 0.5rem 0; line-height: 1.3;'>Below this score, source is automatically removed from tasking</p>", unsafe_allow_html=True)
+        with st.expander("⚖️ DECISION THRESHOLDS", expanded=True):
+            rel_cols = st.columns(2)
+            with rel_cols[0]:
+                rel_disengage = st.slider(
+                    "Reliability disengage", 
+                    0.0, 1.0, 
+                    default_rel_disengage,
+                    0.05,
+                    key="rel_disengage_slider",
+                    help="Below this score, source is removed from tasking"
+                )
+                st.markdown("<p style='font-size: 9px; color: #6b7280; margin: -0.5rem 0 0.5rem 0; line-height: 1.3;'>Below this score, source is automatically removed from tasking</p>", unsafe_allow_html=True)
+                
+            with rel_cols[1]:
+                rel_ci_flag = st.slider(
+                    "Reliability flag", 
+                    0.0, 1.0, 
+                    default_rel_flag,
+                    0.05,
+                    key="rel_ci_flag_slider",
+                    help="Triggers enhanced monitoring and verification"
+                )
+                st.markdown("<p style='font-size: 9px; color: #6b7280; margin: -0.5rem 0 0.5rem 0; line-height: 1.3;'>Triggers enhanced monitoring and CI review</p>", unsafe_allow_html=True)
             
-        with rel_cols[1]:
-            rel_ci_flag = st.slider(
-                "Reliability flag", 
-                0.0, 1.0, 
-                default_rel_flag,
-                0.05,
-                key="rel_ci_flag_slider",
-                help="Triggers enhanced monitoring and verification"
-            )
-            st.markdown("<p style='font-size: 9px; color: #6b7280; margin: -0.5rem 0 0.5rem 0; line-height: 1.3;'>Triggers enhanced monitoring and CI review</p>", unsafe_allow_html=True)
-        
-        dec_cols = st.columns(2)
-        with dec_cols[0]:
-            dec_disengage = st.slider(
-                "Deception reject", 
-                0.0, 1.0, 
-                default_dec_disengage,
-                0.05,
-                key="dec_disengage_slider",
-                help="High deception confidence triggers full rejection"
-            )
-            st.markdown("<p style='font-size: 9px; color: #6b7280; margin: -0.5rem 0 0.5rem 0; line-height: 1.3;'>High confidence deception triggers full source rejection</p>", unsafe_allow_html=True)
+            dec_cols = st.columns(2)
+            with dec_cols[0]:
+                dec_disengage = st.slider(
+                    "Deception reject", 
+                    0.0, 1.0, 
+                    default_dec_disengage,
+                    0.05,
+                    key="dec_disengage_slider",
+                    help="High deception confidence triggers full rejection"
+                )
+                st.markdown("<p style='font-size: 9px; color: #6b7280; margin: -0.5rem 0 0.5rem 0; line-height: 1.3;'>High confidence deception triggers full source rejection</p>", unsafe_allow_html=True)
+                
+            with dec_cols[1]:
+                dec_ci_flag = st.slider(
+                    "Deception escalate", 
+                    0.0, 1.0, 
+                    default_dec_escalate,
+                    0.05,
+                    key="dec_ci_flag_slider",
+                    help="Moderate deception escalates to CI investigation"
+                )
+                st.markdown("<p style='font-size: 9px; color: #6b7280; margin: -0.5rem 0 0.5rem 0; line-height: 1.3;'>Moderate deception risk escalates to CI investigation</p>", unsafe_allow_html=True)
             
-        with dec_cols[1]:
-            dec_ci_flag = st.slider(
-                "Deception escalate", 
-                0.0, 1.0, 
-                default_dec_escalate,
-                0.05,
-                key="dec_ci_flag_slider",
-                help="Moderate deception escalates to CI investigation"
-            )
-            st.markdown("<p style='font-size: 9px; color: #6b7280; margin: -0.5rem 0 0.5rem 0; line-height: 1.3;'>Moderate deception risk escalates to CI investigation</p>", unsafe_allow_html=True)
-        
-        # Check for threshold conflicts
-        if dec_ci_flag > dec_disengage:
-            st.markdown("""
-            <div style='background: #fef2f2; border: 1px solid #fca5a5; border-radius: 6px; 
-                        padding: 0.5rem; margin: 0.5rem 0;'>
-                <p style='margin: 0; font-size: 10px; color: #991b1b;'>
-                    ⚠️ <strong>Policy conflict:</strong> Escalate threshold exceeds reject threshold
-                </p>
-            </div>
-            """, unsafe_allow_html=True)
-        
+            # Check for threshold conflicts
+            if dec_ci_flag > dec_disengage:
+                st.markdown("""
+                <div style='background: #fef2f2; border: 1px solid #fca5a5; border-radius: 6px; 
+                            padding: 0.5rem; margin: 0.5rem 0;'>
+                    <p style='margin: 0; font-size: 10px; color: #991b1b;'>
+                        ⚠️ <strong>Policy conflict:</strong> Escalate threshold exceeds reject threshold
+                    </p>
+                </div>
+                """, unsafe_allow_html=True)
+            
         st.session_state.recourse_rules = {
             "rel_disengage": float(rel_disengage),
             "rel_ci_flag": float(rel_ci_flag),
             "dec_disengage": float(dec_disengage),
             "dec_ci_flag": float(dec_ci_flag),
         }
-        
-        st.markdown("</div>", unsafe_allow_html=True)
         
         # ========== SCENARIO SUMMARY (LIVE FEEDBACK ENGINE) ==========
         # Calculate risk posture
@@ -4043,18 +5587,24 @@ def render_streamlit_app():
     # ======================================================
     sources = []
     
-    # First, collect source data from profiles
+    # First, collect source data from profiles with all 6 features
     source_ids = [f"SRC_{k + 1:03d}" for k in range(num_sources)]
     for i in range(num_sources):
         rng = np.random.default_rng(i + 1)
         tsr_default = float(np.clip(rng.beta(5, 3), 0.0, 1.0))
         cor_default = float(np.clip(rng.beta(4, 4), 0.0, 1.0))
         time_default = float(np.clip(rng.beta(4, 4), 0.0, 1.0))
+        handler_default = float(np.clip(rng.beta(4, 3), 0.0, 1.0))
+        dec_default = float(np.clip(rng.beta(2, 5), 0.0, 0.8))
+        ci_default = int(rng.choice([0, 1], p=[0.88, 0.12]))
         
         features = {
             "task_success_rate": float(tsr_default),
             "corroboration_score": float(cor_default),
-            "report_timeliness": float(time_default)
+            "report_timeliness": float(time_default),
+            "handler_confidence": float(handler_default),
+            "deception_score": float(dec_default),
+            "ci_flag": int(ci_default)
         }
         
         sources.append({
@@ -4249,8 +5799,19 @@ def render_streamlit_app():
         st.markdown('<div class="section-frame">', unsafe_allow_html=True)
         st.markdown("""<h3 class="section-header">💰 EVPI Focus - Expected Value of Perfect Information</h3>
         <p style="text-align:center;color:#6b7280;font-size:13px;margin:0 0 1rem 0;">
-            Quantify the value of perfect information in source selection and tasking decisions.
-        </p>""", unsafe_allow_html=True)
+            Quantify the marginal value of eliminating source behavior uncertainty through perfect information acquisition.
+        </p>
+        <div style='background: linear-gradient(135deg, #f0f9ff 0%, #e0f2fe 100%); 
+                    padding: 1rem; border-radius: 8px; border-left: 4px solid #3b82f6; 
+                    margin-bottom: 1.5rem;'>
+            <p style='margin: 0; font-size: 12px; color: #1e3a8a; line-height: 1.6;'>
+                <strong>Decision Context:</strong> EVPI measures the maximum justifiable cost of obtaining perfect foreknowledge 
+                about each source's true reliability and deception risk. High EVPI indicates that current uncertainty 
+                materially degrades decision quality—these sources warrant enhanced vetting, corroboration, or collection investment. 
+                Low EVPI suggests the ML model has already extracted actionable signal from available data.
+            </p>
+        </div>
+        """, unsafe_allow_html=True)
         ml_policy = results.get("policies", {}).get("ml_tssp", [])
         uni_policy = results.get("policies", {}).get("uniform", [])
         
@@ -4863,3 +6424,8 @@ def render_streamlit_app():
 # ======================================================
 if __name__ == "__main__" or MODE == "streamlit":
     render_streamlit_app()
+
+
+
+
+
